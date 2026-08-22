@@ -2,7 +2,7 @@
 
 Event-driven **paper-trading / research engine** for cross-market arbitrage in physical goods.
 
-The project models 20 resale sectors (graded cards, watches, LEGO, sneakers, cameras, music gear, electronics, etc.) under one capital constraint. It ranks opportunities by a conservative lower-confidence-bound (LCB) estimate of net profit per capital-day, routes each item to the best simulated exit venue after fees, and tracks cash, inventory, turnover, realized P&L and capacity.
+The project models a maximal universe of 389 resale sub-sectors (graded cards, watches, LEGO, sneakers, cameras, music gear, electronics, etc.) under one capital constraint. It ranks opportunities by a conservative lower-confidence-bound (LCB) estimate of net profit per capital-day, routes each item to the best simulated exit venue after fees, and tracks cash, inventory, turnover, realized P&L and capacity.
 
 > **Important:** the default `live` mode is a synthetic live market used for research and paper trading. It does **not** scrape marketplaces, submit orders, or claim that simulated returns are achievable. Real marketplace adapters must use authorized APIs/feeds and current terms/fees.
 
@@ -19,30 +19,13 @@ score = LCB_profit / (capital_required * expected_holding_days)
 
 Capital scarcity is endogenous. When utilization rises, the required score rises via a shadow price of capital; the engine therefore keeps only the best inventory rather than using a fixed ROI threshold.
 
-## 20 sectors
+## Maximal universe: 389 sub-sectors
 
-1. TCG graded cards
-2. Modern watches
-3. LEGO sealed
-4. Graded sports cards
-5. Deadstock sneakers
-6. Camera lenses
-7. Sealed TCG
-8. Numismatic coins
-9. Graded comics
-10. Synths / drum machines
-11. Retro games
-12. Camera bodies
-13. Luxury handbags
-14. Rare vinyl
-15. Guitar pedals
-16. High-end headphones
-17. GPUs / PC parts
-18. Consoles / handhelds
-19. Premium smartphones
-20. Laptops / tablets
+The default configuration spans **389 sub-sectors**, grouped across watches, cards, sealed collectibles, fashion, luxury, jewelry, photo/video, electronics, audio, music gear, media, sports, outdoor, design, tools, automotive, home, books, hobby/toys and general collectibles. It also models **83 economic exit venues** and maintains a **197-source data registry**.
 
-Parameters live in `config/markets.json`; they are intentionally editable and should be re-estimated from point-in-time data. Two parameters are deliberately exposed because they dominate capacity: `arrival_multiplier` controls how many prefiltered candidate listings the scanner sees, and `edge_shrinkage` controls how much of an apparent discount survives winner's-curse/hidden-quality correction.
+The source registry deliberately distinguishes `official_api`, `manual_csv`, `licensed_or_manual`, and `partner_or_manual`. A source being in the registry does **not** mean the project scrapes it or currently has authorization to query it.
+
+The default maximal universe is stored compactly in `config/maximal_catalog.json.z64` in the repository (decoded transparently by the loader); `config/markets.json` is retained as a legacy 20-sector research config. Parameters are intentionally editable and should be re-estimated from point-in-time data. Two parameters are deliberately exposed because they dominate capacity: `arrival_multiplier` controls how many prefiltered candidate listings the scanner sees, and `edge_shrinkage` controls how much of an apparent discount survives winner's-curse/hidden-quality correction.
 
 ## Quick start
 
@@ -94,6 +77,31 @@ paper execution -> inventory -> stochastic exit -> realized cash P&L
 ```
 
 The interfaces intentionally separate **market ingestion** from **trading logic**, so a future authorized StockX/eBay/Chrono24/etc. adapter does not require rewriting the portfolio engine.
+
+## Real paper-live feeds
+
+The repository now includes a paper-only feed layer. Current implemented adapters are **eBay Browse API, StockX developer API, Reverb API, Etsy Open API v3, Mercado Libre and Rakuten Ichiba**, plus a universal CSV/import adapter for authorized exports and partner feeds. Credentials are read only from environment variables; no secrets belong in Git.
+
+```bash
+cp .env.example .env  # then export only the credentials you actually have
+python scripts/list_universe.py
+python scripts/run_feed_scan.py --query "Rolex Explorer 124270" --query "Air Jordan 1" --query "Pokemon PSA 10"
+python scripts/rank_snapshot_spreads.py
+```
+
+Every observation is appended point-in-time to SQLite (`data/roman_snapshots.sqlite`). Missing credentials cause a source to be skipped, never replaced by fabricated data. Sources without an approved API can enter through the standardized CSV schema in `data/feed_template.csv`.
+
+### 24/7 server mode
+
+The maximal live scanner rotates through sector queries so API quotas are not exhausted in one burst:
+
+```bash
+python scripts/run_live_daemon.py --interval 300 --health-port 8787
+# or
+docker compose up -d --build
+```
+
+The local health endpoints are `http://127.0.0.1:8787/health` and `/candidates`. Deployment details are in `DEPLOY_SERVER.md`. The live service is intentionally paper-only and contains no order-submission path.
 
 ## Historical StockX research replay
 
