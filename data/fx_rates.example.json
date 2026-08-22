@@ -1,0 +1,9 @@
+{
+  "base": "EUR",
+  "asof": "",
+  "source": "not-refreshed",
+  "foreign_per_eur": {"EUR": 1.0},
+  "friction_pct": 0.004,
+  "max_age_hours": 96.0,
+  "warning": "Run python scripts/refresh_fx.py before cross-currency paper-live validation."
+}
