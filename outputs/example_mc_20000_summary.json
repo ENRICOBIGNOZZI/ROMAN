@@ -1,0 +1,12 @@
+{
+  "capital": 20000.0,
+  "years": 30,
+  "return_mean": 0.1981647907546063,
+  "return_median": 0.19360115881221346,
+  "return_p10": 0.1766929406971029,
+  "return_p90": 0.22303714575537173,
+  "utilization_mean": 0.16635230691931585,
+  "trades_mean": 177.73333333333332,
+  "turnover_mean": 5.623488291497793,
+  "loss_year_fraction": 0.0
+}
