@@ -1,0 +1,2 @@
+external_id,title,price,currency,url,condition,seller,category,product_key,observed_at
+example-1,Example listing,100.00,EUR,https://example.com,item condition,seller,category,canonical-product-id,2026-08-22T18:00:00+00:00
