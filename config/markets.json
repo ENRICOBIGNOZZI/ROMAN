@@ -1,0 +1,52 @@
+{
+  "assumptions": {
+    "currency": "EUR",
+    "swiss_import_tax_rate": 0.0,
+    "lcb_z": 1.35,
+    "min_lcb_roi": 0.004,
+    "max_item_fraction": 0.25,
+    "max_sector_fraction": 0.4,
+    "cash_buffer_fraction": 0.05,
+    "forced_liquidation_days": 90,
+    "shadow_hurdle_base_daily": 4e-05,
+    "shadow_hurdle_slope_daily": 0.00032,
+    "edge_shrinkage": 0.6,
+    "edge_hidden_mean": -0.003,
+    "edge_hidden_sigma_base": 0.008,
+    "arrival_multiplier": 1.0
+  },
+  "venues": {
+    "stockx": {"sell_fee": 0.11, "fixed_exit": 0.0},
+    "goat": {"sell_fee": 0.105, "fixed_exit": 5.0},
+    "ebay": {"sell_fee": 0.095, "fixed_exit": 0.35},
+    "chrono24": {"sell_fee": 0.065, "fixed_exit": 0.0},
+    "bricklink": {"sell_fee": 0.03, "fixed_exit": 0.0},
+    "tcgplayer": {"sell_fee": 0.1325, "fixed_exit": 0.3},
+    "reverb": {"sell_fee": 0.0819, "fixed_exit": 0.49},
+    "whatnot": {"sell_fee": 0.09, "fixed_exit": 0.3},
+    "local": {"sell_fee": 0.015, "fixed_exit": 4.0, "price_haircut": 0.06},
+    "dealer": {"sell_fee": 0.0, "fixed_exit": 0.0, "price_haircut": 0.075}
+  },
+  "sectors": [
+    {"key":"tcg_graded","name":"TCG graded cards","candidate_rate":3.8,"avg_ticket":290,"ticket_sigma":0.7,"gross_discount_mu":0.155,"gross_discount_sigma":0.05,"model_sigma":0.025,"holding_days":9,"holding_sigma":0.55,"fill_prob":0.58,"quality_sigma":0.008,"problem_prob":0.008,"problem_loss":0.1,"buy_cost_pct":0.012,"buy_fixed":3,"exit_venues":["ebay","whatnot","local"]},
+    {"key":"modern_watches","name":"Modern watches","candidate_rate":0.42,"avg_ticket":3300,"ticket_sigma":0.48,"gross_discount_mu":0.125,"gross_discount_sigma":0.045,"model_sigma":0.03,"holding_days":20,"holding_sigma":0.5,"fill_prob":0.42,"quality_sigma":0.025,"problem_prob":0.018,"problem_loss":0.13,"buy_cost_pct":0.012,"buy_fixed":70,"exit_venues":["chrono24","ebay","dealer"]},
+    {"key":"lego_sealed","name":"LEGO sealed","candidate_rate":2.4,"avg_ticket":420,"ticket_sigma":0.73,"gross_discount_mu":0.105,"gross_discount_sigma":0.038,"model_sigma":0.02,"holding_days":13,"holding_sigma":0.55,"fill_prob":0.56,"quality_sigma":0.006,"problem_prob":0.006,"problem_loss":0.08,"buy_cost_pct":0.018,"buy_fixed":5,"exit_venues":["bricklink","ebay","local"]},
+    {"key":"sports_cards","name":"Graded sports cards","candidate_rate":2.1,"avg_ticket":360,"ticket_sigma":0.77,"gross_discount_mu":0.155,"gross_discount_sigma":0.05,"model_sigma":0.027,"holding_days":11,"holding_sigma":0.6,"fill_prob":0.54,"quality_sigma":0.008,"problem_prob":0.009,"problem_loss":0.1,"buy_cost_pct":0.012,"buy_fixed":3,"exit_venues":["ebay","whatnot","local"]},
+    {"key":"sneakers_ds","name":"Deadstock sneakers","candidate_rate":3.4,"avg_ticket":245,"ticket_sigma":0.56,"gross_discount_mu":0.165,"gross_discount_sigma":0.048,"model_sigma":0.021,"holding_days":8,"holding_sigma":0.55,"fill_prob":0.6,"quality_sigma":0.006,"problem_prob":0.01,"problem_loss":0.1,"buy_cost_pct":0.02,"buy_fixed":4,"exit_venues":["stockx","goat","ebay","local"]},
+    {"key":"camera_lenses","name":"Camera lenses","candidate_rate":0.9,"avg_ticket":760,"ticket_sigma":0.62,"gross_discount_mu":0.145,"gross_discount_sigma":0.045,"model_sigma":0.028,"holding_days":17,"holding_sigma":0.55,"fill_prob":0.48,"quality_sigma":0.018,"problem_prob":0.015,"problem_loss":0.15,"buy_cost_pct":0.016,"buy_fixed":10,"exit_venues":["ebay","local"]},
+    {"key":"tcg_sealed","name":"Sealed TCG","candidate_rate":2.2,"avg_ticket":190,"ticket_sigma":0.69,"gross_discount_mu":0.14,"gross_discount_sigma":0.04,"model_sigma":0.02,"holding_days":10,"holding_sigma":0.55,"fill_prob":0.58,"quality_sigma":0.007,"problem_prob":0.007,"problem_loss":0.09,"buy_cost_pct":0.016,"buy_fixed":3,"exit_venues":["ebay","tcgplayer","whatnot","local"]},
+    {"key":"coins","name":"Numismatic coins","candidate_rate":0.62,"avg_ticket":650,"ticket_sigma":0.82,"gross_discount_mu":0.14,"gross_discount_sigma":0.047,"model_sigma":0.03,"holding_days":24,"holding_sigma":0.65,"fill_prob":0.4,"quality_sigma":0.02,"problem_prob":0.012,"problem_loss":0.12,"buy_cost_pct":0.012,"buy_fixed":5,"exit_venues":["ebay","local"]},
+    {"key":"graded_comics","name":"Graded comics","candidate_rate":0.85,"avg_ticket":330,"ticket_sigma":0.82,"gross_discount_mu":0.15,"gross_discount_sigma":0.048,"model_sigma":0.029,"holding_days":18,"holding_sigma":0.65,"fill_prob":0.43,"quality_sigma":0.011,"problem_prob":0.009,"problem_loss":0.11,"buy_cost_pct":0.015,"buy_fixed":5,"exit_venues":["ebay","whatnot","local"]},
+    {"key":"synths","name":"Synths / drum machines","candidate_rate":0.36,"avg_ticket":890,"ticket_sigma":0.58,"gross_discount_mu":0.14,"gross_discount_sigma":0.042,"model_sigma":0.028,"holding_days":22,"holding_sigma":0.55,"fill_prob":0.42,"quality_sigma":0.02,"problem_prob":0.018,"problem_loss":0.14,"buy_cost_pct":0.015,"buy_fixed":12,"exit_venues":["reverb","ebay","local"]},
+    {"key":"retro_games","name":"Retro games","candidate_rate":1.25,"avg_ticket":145,"ticket_sigma":0.8,"gross_discount_mu":0.14,"gross_discount_sigma":0.046,"model_sigma":0.025,"holding_days":15,"holding_sigma":0.65,"fill_prob":0.5,"quality_sigma":0.015,"problem_prob":0.012,"problem_loss":0.12,"buy_cost_pct":0.02,"buy_fixed":3,"exit_venues":["ebay","local"]},
+    {"key":"camera_bodies","name":"Camera bodies","candidate_rate":0.48,"avg_ticket":980,"ticket_sigma":0.55,"gross_discount_mu":0.14,"gross_discount_sigma":0.043,"model_sigma":0.028,"holding_days":18,"holding_sigma":0.55,"fill_prob":0.45,"quality_sigma":0.02,"problem_prob":0.018,"problem_loss":0.16,"buy_cost_pct":0.015,"buy_fixed":12,"exit_venues":["ebay","local"]},
+    {"key":"luxury_handbags","name":"Luxury handbags","candidate_rate":0.26,"avg_ticket":2200,"ticket_sigma":0.58,"gross_discount_mu":0.16,"gross_discount_sigma":0.055,"model_sigma":0.04,"holding_days":32,"holding_sigma":0.65,"fill_prob":0.34,"quality_sigma":0.035,"problem_prob":0.022,"problem_loss":0.18,"buy_cost_pct":0.014,"buy_fixed":35,"exit_venues":["ebay","local","dealer"]},
+    {"key":"rare_vinyl","name":"Rare vinyl","candidate_rate":1.05,"avg_ticket":115,"ticket_sigma":0.85,"gross_discount_mu":0.14,"gross_discount_sigma":0.045,"model_sigma":0.028,"holding_days":20,"holding_sigma":0.75,"fill_prob":0.5,"quality_sigma":0.025,"problem_prob":0.015,"problem_loss":0.12,"buy_cost_pct":0.02,"buy_fixed":4,"exit_venues":["ebay","local"]},
+    {"key":"guitar_pedals","name":"Guitar pedals","candidate_rate":0.82,"avg_ticket":155,"ticket_sigma":0.6,"gross_discount_mu":0.13,"gross_discount_sigma":0.038,"model_sigma":0.023,"holding_days":13,"holding_sigma":0.55,"fill_prob":0.5,"quality_sigma":0.014,"problem_prob":0.012,"problem_loss":0.12,"buy_cost_pct":0.018,"buy_fixed":4,"exit_venues":["reverb","ebay","local"]},
+    {"key":"headphones","name":"High-end headphones","candidate_rate":0.52,"avg_ticket":520,"ticket_sigma":0.58,"gross_discount_mu":0.135,"gross_discount_sigma":0.042,"model_sigma":0.026,"holding_days":16,"holding_sigma":0.55,"fill_prob":0.47,"quality_sigma":0.018,"problem_prob":0.016,"problem_loss":0.14,"buy_cost_pct":0.017,"buy_fixed":6,"exit_venues":["ebay","local"]},
+    {"key":"gpus","name":"GPUs / PC parts","candidate_rate":0.82,"avg_ticket":460,"ticket_sigma":0.56,"gross_discount_mu":0.135,"gross_discount_sigma":0.038,"model_sigma":0.024,"holding_days":10,"holding_sigma":0.5,"fill_prob":0.52,"quality_sigma":0.015,"problem_prob":0.018,"problem_loss":0.15,"buy_cost_pct":0.018,"buy_fixed":6,"exit_venues":["ebay","local"]},
+    {"key":"consoles","name":"Consoles / handhelds","candidate_rate":0.82,"avg_ticket":290,"ticket_sigma":0.5,"gross_discount_mu":0.13,"gross_discount_sigma":0.035,"model_sigma":0.022,"holding_days":9,"holding_sigma":0.5,"fill_prob":0.54,"quality_sigma":0.012,"problem_prob":0.015,"problem_loss":0.13,"buy_cost_pct":0.018,"buy_fixed":5,"exit_venues":["ebay","local"]},
+    {"key":"smartphones","name":"Premium smartphones","candidate_rate":0.7,"avg_ticket":650,"ticket_sigma":0.43,"gross_discount_mu":0.14,"gross_discount_sigma":0.038,"model_sigma":0.026,"holding_days":8,"holding_sigma":0.45,"fill_prob":0.5,"quality_sigma":0.02,"problem_prob":0.025,"problem_loss":0.2,"buy_cost_pct":0.018,"buy_fixed":7,"exit_venues":["ebay","local"]},
+    {"key":"laptops_tablets","name":"Laptops / tablets","candidate_rate":0.55,"avg_ticket":820,"ticket_sigma":0.48,"gross_discount_mu":0.14,"gross_discount_sigma":0.038,"model_sigma":0.026,"holding_days":11,"holding_sigma":0.5,"fill_prob":0.47,"quality_sigma":0.02,"problem_prob":0.024,"problem_loss":0.18,"buy_cost_pct":0.018,"buy_fixed":8,"exit_venues":["ebay","local"]}
+  ]
+}
