@@ -29,6 +29,9 @@ class Sector:
     buy_cost_pct: float
     buy_fixed: float
     exit_venues: tuple[str, ...]
+    source_venues: tuple[str, ...] = ()
+    family: str = ""
+    buy_venues: tuple[str, ...] = ()
 
 
 @dataclass
