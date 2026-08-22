@@ -1,0 +1,23 @@
+{
+  "initial_capital": 20000.0,
+  "final_cash": 24074.856950585985,
+  "pnl": 4074.856950585985,
+  "return": 0.20374284752929925,
+  "trades": 181,
+  "win_rate": 0.9005524861878453,
+  "mean_trade_roi": 0.03904336604034415,
+  "median_trade_roi": 0.04171760746942958,
+  "mean_holding_days": 10.480662983425415,
+  "turnover": 5.215568686003681,
+  "utilization": 0.151455737015331,
+  "problem_trades": 1,
+  "forced_trades": 2,
+  "candidate_listings": 8777,
+  "strategy_qualified": 325,
+  "fills": 181,
+  "rejected_for_capital_or_limits": 1,
+  "seed": 7,
+  "days": 365,
+  "arrival_multiplier": 1.0,
+  "edge_shrinkage": 0.6
+}
