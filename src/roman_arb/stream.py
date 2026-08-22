@@ -44,7 +44,8 @@ class SyntheticMarketStream:
         # The strategy has learned the shrinkage, but still has model error.
         est_error = self.rng.normal(0.0, 0.55 * s.model_sigma)
         estimated_fair = expected_fair * math.exp(est_error)
-        buy_venue = str(self.rng.choice(BUY_VENUES))
+        buy_pool = s.source_venues or s.buy_venues or BUY_VENUES
+        buy_venue = str(self.rng.choice(buy_pool))
         return Listing(
             listing_id=f"L{self.counter:09d}", day=day, sector=s.key,
             buy_venue=buy_venue, buy_price=buy_price,
