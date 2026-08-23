@@ -154,10 +154,23 @@ def main():
                 for c in candidates:
                     c["pre_fdr_trade"] = bool(c.get("trade"))
                     c["trade"] = bool(c.get("fdr_selected"))
+
+                # Existing inventory is evaluated first. Only a fresh executable
+                # route can close a position; marks/comparable asks never do.
+                engine.ledger.mark(candidates)
+                closed = engine.ledger.apply_exit_policy()
+
+                # Freed cash is immediately visible to the allocator. Newly opened
+                # positions cannot close in the same cycle because the exit policy
+                # already ran above.
                 basket = engine.allocate(candidates)
                 engine.record_cycle(counts, candidates, len(fdr_result.selected))
                 payload = engine.dashboard_payload(candidates, basket)
+                ledger_summary = engine.ledger.summary()
                 payload["cycle_rows"] = counts
+                payload["closed_this_cycle"] = closed
+                payload["realized_pnl"] = ledger_summary.realized_pnl
+                payload["aged_capital"] = ledger_summary.aged_capital
                 payload["posterior_fdr"] = {
                     "alpha": fdr_result.alpha,
                     "mean_false_probability": fdr_result.mean_false_probability,
@@ -182,9 +195,14 @@ def main():
                             "raw": len(candidates),
                             "pre_fdr": sum(1 for c in candidates if c.get("pre_fdr_trade")),
                             "fdr_selected": len(fdr_result.selected),
+                            "opened": engine._last_new_positions,
+                            "closed": len(closed),
                             "open_positions": payload.get("open_positions"),
                             "deployed": payload.get("deployed"),
+                            "cash": payload.get("cash"),
+                            "realized_pnl": payload.get("realized_pnl"),
                             "mark_pnl": payload.get("mark_pnl"),
+                            "aged_capital": payload.get("aged_capital"),
                             "pca": payload.get("model_status", {}).get("PCA residual factors"),
                         },
                         sort_keys=True,
