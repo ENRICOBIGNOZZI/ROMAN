@@ -10,8 +10,7 @@ def test_listing_price_alone_never_creates_pure_arbitrage():
 
     books = build_executable_books(rows)
 
-    assert books["x"]["buys"] == []
-    assert books["x"]["sells"] == []
+    assert "x" not in books
 
 
 def test_executable_ask_and_bid_create_cross_venue_candidate():
