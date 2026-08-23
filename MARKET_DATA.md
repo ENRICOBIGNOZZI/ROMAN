@@ -14,8 +14,9 @@ ROMAN separates **market discovery** from **valuation reference data** and from 
 | Rakuten Ichiba | Japan retail/secondary opportunities | official API | listings |
 | Ricardo | Switzerland broad second-hand | partner API/token | listings |
 | PriceCharting Marketplace | videogames / consoles | licensed API | concrete available offers |
+| CardTrader | Pokémon / MTG / One Piece / Lorcana / other TCG | official Bearer API | concrete marketplace products |
 
-A source without its required credential remains `NO_CREDENTIALS`; the live engine continues with the other feeds.
+A source without its required credential remains `NO_CREDENTIALS`; the live engine continues with the other feeds. CardTrader is read-only in ROMAN: the API also exposes purchase/cart actions, but the engine never calls them.
 
 ## 2. Reference-only data wired into a separate database
 
@@ -28,8 +29,12 @@ Reference feeds are stored in `data/roman_reference.sqlite`, not in the market-l
 | BrickLink | LEGO | official API | stock price guide |
 | Discogs | vinyl / music | official API | marketplace lowest-price statistics |
 | TCG API | sealed TCG / broad TCG | licensed API | price references |
+| WatchCharts | watches | official API | market / dealer / asking-price references |
+| Keepa | Amazon products across electronics, games, LEGO, cameras, etc. | official paid API | Amazon retail/current-price reference |
 
 Reference influence is deliberately conservative: entity matching must be exact or high confidence, extreme mismatches are ignored, and the aggregate reference weight on the market-derived base fair value is capped at 20%. Disagreement also increases predictive uncertainty.
+
+TCGdex is tracked as an additional public no-auth Pokémon data source, but it is not automatically applied to graded/sealed inventory because raw-card price semantics are not equivalent to PSA/BGS/sealed-product prices.
 
 ## 3. Markets retained but not automatically collected without permission
 
@@ -68,9 +73,19 @@ Some platforms expose APIs but that does not imply general market discovery is c
 - Cardmarket's legacy API remains relevant to existing approved users, but new API applications are currently closed; ROMAN instead uses the official public download files.
 - Vinted Pro integrations and Vestiaire professional integrations primarily solve seller inventory/order integration, not unrestricted public-market discovery.
 
-## 5. Videogame coverage
+## 5. Vertical coverage
 
-Videogames are first-class ROMAN sectors. The live search plan now includes retro games and systems such as EarthBound/SNES, Chrono Trigger, Pokémon GBA/Game Boy, Nintendo 64, Switch and PlayStation. PriceCharting marketplace offers are concrete listings; PriceCharting guide data are reference-only. UPC/ePID identifiers are propagated on both PriceCharting and eBay when available so the same physical game can be resolved cross-market without aggressive fuzzy title matching.
+### Videogames
+Videogames are first-class ROMAN sectors. The live search plan includes retro games and systems such as EarthBound/SNES, Chrono Trigger, Pokémon GBA/Game Boy, Nintendo 64, Switch and PlayStation. PriceCharting marketplace offers are concrete listings; PriceCharting guide data and Keepa prices are reference-only. UPC/ePID identifiers are propagated on both PriceCharting and eBay when available so the same physical game can be resolved cross-market without aggressive fuzzy title matching.
+
+### TCG
+CardTrader supplies concrete marketplace products, while Cardmarket public downloads and optional TCG reference APIs provide price evidence. CardTrader normalized titles preserve the game name plus product/expansion so `Pokemon Booster Box 151` is not collapsed to a generic `Booster Box 151`.
+
+### Watches
+eBay/Ricardo can supply concrete listings while WatchCharts provides brand+reference market/dealer/asking-price evidence. Chrono24 remains a partnership target rather than an unapproved scraper source.
+
+### LEGO, vinyl and electronics
+BrickLink provides LEGO reference guides; Discogs provides vinyl marketplace statistics; Keepa provides Amazon reference prices for standardized retail goods. These remain separate from executable resale routes.
 
 ## 6. Operational inspection
 
