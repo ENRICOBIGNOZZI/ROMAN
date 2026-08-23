@@ -63,6 +63,7 @@ def load_config(path: str | Path | None = None):
         p = default_config_path()
 
     raw = _read_json_or_z64(p)
+    policy = None
 
     # Catalog breadth and live risk policy are different concerns. The packed
     # catalog can be regenerated to add markets, but it must not resurrect stale
@@ -81,8 +82,22 @@ def load_config(path: str | Path | None = None):
         }
 
     venues = {k: Venue(key=k, **v) for k, v in raw["venues"].items()}
+    sector_rows = _expand_catalog(raw) if "templates" in raw else list(raw["sectors"])
+
+    # The maximal catalogue is intentionally broad and can be regenerated
+    # independently from the live policy file. Never let that regeneration drop
+    # a core policy sector that existing live routing depends on. Missing policy
+    # sectors are appended; existing maximal rows retain their richer source/buy
+    # venue metadata and template economics.
+    if policy is not None:
+        existing_keys = {str(row.get("key") or "") for row in sector_rows}
+        for row in policy.get("sectors", []):
+            key = str(row.get("key") or "")
+            if key and key not in existing_keys:
+                sector_rows.append(dict(row))
+                existing_keys.add(key)
+
     sectors = {}
-    sector_rows = _expand_catalog(raw) if "templates" in raw else raw["sectors"]
     for s in sector_rows:
         d = dict(s)
         d["exit_venues"] = tuple(d["exit_venues"])
