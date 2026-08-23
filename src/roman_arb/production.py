@@ -37,6 +37,22 @@ _TCG_QUERIES = [
     "One Piece booster box",
 ]
 
+_WATCH_QUERIES = [
+    "Rolex 124270",
+    "Omega Speedmaster 310.30.42.50.01.001",
+    "Rolex 126610LN",
+    "Cartier WSSA0018",
+]
+
+_RETAIL_REFERENCE_QUERIES = [
+    "Nintendo Switch OLED",
+    "PlayStation 5 Slim",
+    "iPhone 15 Pro 256GB",
+    "RTX 4090",
+    "Sony FE 24-70 GM II",
+    "LEGO 75192",
+]
+
 _RICARDO_SEEDS = [
     "Rolex 124270",
     "Omega Speedmaster 310.30.42.50.01.001",
@@ -63,6 +79,8 @@ _REFERENCE_QUERIES = {
     "discogs_reference": _VINYL_QUERIES,
     "tcgapi_reference": _TCG_QUERIES,
     "pricecharting_reference": _VIDEO_GAME_QUERIES,
+    "watchcharts_reference": _WATCH_QUERIES,
+    "keepa_reference": _RETAIL_REFERENCE_QUERIES,
 }
 
 
@@ -124,16 +142,19 @@ class ShadowLiveEngine(_BaseShadowLiveEngine):
         sector_names = [s.name for s in self.sectors.values()]
         self.plan["ricardo"] = list(dict.fromkeys(_RICARDO_SEEDS + sector_names))
         self.plan["pricecharting"] = list(_VIDEO_GAME_QUERIES)
+        self.plan["cardtrader"] = list(_TCG_QUERIES)
 
         # eBay is the broadest cross-market bridge. Add high-identity vertical
-        # seeds so videogame/vinyl/TCG reference markets can actually meet a
-        # concrete listing on a common entity.
+        # seeds so specialized markets can actually meet a concrete listing on a
+        # common entity/query.
         ebay_plan = self.plan.get("ebay", [])
         self.plan["ebay"] = list(
             dict.fromkeys(
                 _VIDEO_GAME_QUERIES
                 + _VINYL_QUERIES
                 + _TCG_QUERIES
+                + _WATCH_QUERIES
+                + _RETAIL_REFERENCE_QUERIES
                 + ebay_plan
             )
         )[:800]
@@ -159,6 +180,22 @@ class ShadowLiveEngine(_BaseShadowLiveEngine):
                 sector = self.sectors.get("consoles")
             else:
                 sector = self.sectors.get("retro_games")
+            if sector is not None:
+                return sector.key, sector.family
+        if source == "cardtrader":
+            title = str(row.get("title") or "").lower()
+            sealed = any(
+                token in title
+                for token in (
+                    "booster box",
+                    "booster bundle",
+                    "booster pack",
+                    "sealed",
+                    "display",
+                    "elite trainer box",
+                )
+            )
+            sector = self.sectors.get("tcg_sealed" if sealed else "tcg_graded")
             if sector is not None:
                 return sector.key, sector.family
         return super()._sector(row)
@@ -228,7 +265,9 @@ class ShadowLiveEngine(_BaseShadowLiveEngine):
             # than useful information. Preserve it in the DB but do not update FV.
             if ratio < 0.50 or ratio > 2.00:
                 continue
-            evidence_weight = 0.15 if exact else min(0.10, 0.03 + 0.07 * max(score - 0.70, 0.0) / 0.30)
+            evidence_weight = 0.15 if exact else min(
+                0.10, 0.03 + 0.07 * max(score - 0.70, 0.0) / 0.30
+            )
             values.append(
                 {
                     "value_eur": float(eur),
@@ -240,7 +279,11 @@ class ShadowLiveEngine(_BaseShadowLiveEngine):
                 }
             )
         values.sort(
-            key=lambda x: (x["exact_entity"], x["match_confidence"], x["evidence_weight"]),
+            key=lambda x: (
+                x["exact_entity"],
+                x["match_confidence"],
+                x["evidence_weight"],
+            ),
             reverse=True,
         )
         return values[:8]
