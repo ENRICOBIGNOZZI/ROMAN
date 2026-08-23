@@ -22,6 +22,7 @@ def test_closed_executable_outcome_updates_value_and_hazard_only(tmp_path):
                 "sector": "cards",
                 "family": "graded",
                 "seller_route_key": "seller-a:buy->exit",
+                "exit_source": "ebay",
                 "locked": True,
                 "locked_exit_bid": 120.0,
                 "exit_fee_rate": 0.10,
@@ -39,6 +40,7 @@ def test_closed_executable_outcome_updates_value_and_hazard_only(tmp_path):
             [
                 {
                     "entity_key": "id:cards:x",
+                    "exit_source": "ebay",
                     "close_value": 108.0,
                     "roi": 0.08,
                     "age_days": 5.0,
@@ -61,6 +63,41 @@ def test_closed_executable_outcome_updates_value_and_hazard_only(tmp_path):
         engine.close()
 
 
+def test_closed_feedback_is_bound_to_recorded_exit_source(tmp_path):
+    engine = _engine(tmp_path)
+    try:
+        common = {
+            "entity_key": "id:cards:x",
+            "sector": "cards",
+            "family": "graded",
+            "locked": True,
+            "exit_fee_rate": 0.10,
+        }
+        engine._last_scored_candidates = [
+            dict(common, exit_source="stockx", locked_exit_bid=150.0),
+            dict(common, exit_source="ebay", locked_exit_bid=120.0),
+        ]
+        learned = engine._learn_closed_outcomes(
+            [
+                {
+                    "entity_key": "id:cards:x",
+                    "exit_source": "ebay",
+                    "close_value": 108.0,
+                    "roi": 0.08,
+                    "age_days": 5.0,
+                }
+            ]
+        )
+        assert learned == 1
+        estimate = engine.model.hierarchy.predict(
+            "cards", "graded", "id:cards:x"
+        )
+        assert estimate is not None
+        assert estimate.price == pytest.approx(120.0)
+    finally:
+        engine.close()
+
+
 def test_feedback_is_fail_closed_without_exact_executable_route(tmp_path):
     engine = _engine(tmp_path)
     try:
@@ -68,6 +105,7 @@ def test_feedback_is_fail_closed_without_exact_executable_route(tmp_path):
             {
                 "entity_key": "id:cards:other",
                 "sector": "cards",
+                "exit_source": "ebay",
                 "locked": True,
                 "locked_exit_bid": 120.0,
             }
@@ -76,6 +114,7 @@ def test_feedback_is_fail_closed_without_exact_executable_route(tmp_path):
             [
                 {
                     "entity_key": "id:cards:x",
+                    "exit_source": "ebay",
                     "close_value": 108.0,
                     "roi": 0.08,
                     "age_days": 5.0,
