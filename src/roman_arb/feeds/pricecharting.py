@@ -22,7 +22,7 @@ class PriceChartingFeed:
     def __init__(
         self,
         token: str | None = None,
-        max_products: int = 2,
+        max_products: int = 1,
         *,
         include_marketplace_offers: bool = True,
         include_reference_fallback: bool = False,
@@ -51,10 +51,23 @@ class PriceChartingFeed:
         return data
 
     @staticmethod
-    def _reference_rows(product: dict, detail: dict, query: str) -> list[RawListing]:
+    def _global_key(detail: dict) -> str:
+        upc = str(detail.get("upc") or "").strip()
+        if upc:
+            return f"gtin:{upc}"
+        epid = str(detail.get("epid") or "").strip()
+        if epid:
+            return f"epid:{epid}"
+        return ""
+
+    @classmethod
+    def _reference_rows(
+        cls, product: dict, detail: dict, query: str
+    ) -> list[RawListing]:
         pid = str(product.get("id") or detail.get("id") or "")
         title = str(detail.get("product-name") or product.get("product-name") or query)
         console = str(detail.get("console-name") or product.get("console-name") or "")
+        global_key = cls._global_key(detail)
         out = []
         for field, label in (
             ("loose-price", "Loose"),
@@ -67,6 +80,16 @@ class PriceChartingFeed:
                 pennies = 0
             if pennies <= 0:
                 continue
+            extra = {
+                "query": query,
+                "product_id": pid,
+                "reference_only": True,
+                "reference_kind": "price_guide",
+                "executable_confidence": 0.12,
+                "source_market": "pricecharting",
+            }
+            if global_key:
+                extra["global_product_key"] = global_key
             out.append(
                 RawListing(
                     source="pricecharting_reference",
@@ -77,15 +100,8 @@ class PriceChartingFeed:
                     url=f"https://www.pricecharting.com/game/{pid}" if pid else "",
                     condition=label,
                     category=f"Video Games / {console}".strip(" /"),
-                    product_key=f"pc:{pid}" if pid else "",
-                    extra={
-                        "query": query,
-                        "product_id": pid,
-                        "reference_only": True,
-                        "reference_kind": "price_guide",
-                        "executable_confidence": 0.12,
-                        "source_market": "pricecharting",
-                    },
+                    product_key=global_key or (f"pc:{pid}" if pid else ""),
+                    extra=extra,
                 )
             )
         return out
@@ -100,6 +116,10 @@ class PriceChartingFeed:
             pid = str(product.get("id") or "")
             if not pid:
                 continue
+            # Product details contain UPC/ePID identifiers that can link the same
+            # physical game to eBay without fuzzy-title matching.
+            detail = self._call("/api/product", id=pid)
+            global_key = self._global_key(detail or {})
             offers = []
             if self.include_marketplace_offers:
                 offers_data = self._call(
@@ -116,10 +136,16 @@ class PriceChartingFeed:
                     offer_id = str(offer.get("offer-id") or "")
                     rel = str(offer.get("offer-url") or "")
                     title = str(
-                        offer.get("product-name") or product.get("product-name") or query
+                        offer.get("product-name")
+                        or detail.get("product-name")
+                        or product.get("product-name")
+                        or query
                     )
                     console = str(
-                        offer.get("console-name") or product.get("console-name") or ""
+                        offer.get("console-name")
+                        or detail.get("console-name")
+                        or product.get("console-name")
+                        or ""
                     )
                     condition = " | ".join(
                         x
@@ -129,6 +155,17 @@ class PriceChartingFeed:
                         )
                         if x
                     )
+                    extra = {
+                        "query": query,
+                        "product_id": pid,
+                        "reference_only": False,
+                        "executable_confidence": 0.55,
+                        "source_market": "pricecharting",
+                        "genre": detail.get("genre"),
+                        "offer": offer,
+                    }
+                    if global_key:
+                        extra["global_product_key"] = global_key
                     out.append(
                         RawListing(
                             source=self.name,
@@ -142,22 +179,16 @@ class PriceChartingFeed:
                             condition=condition,
                             seller=str(offer.get("seller-id") or ""),
                             category=f"Video Games / {console}".strip(" /"),
-                            product_key=f"pc:{pid}",
-                            extra={
-                                "query": query,
-                                "product_id": pid,
-                                "reference_only": False,
-                                "executable_confidence": 0.55,
-                                "source_market": "pricecharting",
-                                "offer": offer,
-                            },
+                            product_key=global_key or f"pc:{pid}",
+                            extra=extra,
                         )
                     )
                     if len(out) >= limit:
                         return out
 
-            if self.include_reference_fallback and (not offers or not self.include_marketplace_offers):
-                detail = self._call("/api/product", id=pid)
+            if self.include_reference_fallback and (
+                not offers or not self.include_marketplace_offers
+            ):
                 for row in self._reference_rows(product, detail or {}, query):
                     out.append(row)
                     if len(out) >= limit:
