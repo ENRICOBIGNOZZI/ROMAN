@@ -21,6 +21,14 @@ def _parse(x: str) -> datetime | None:
         return None
 
 
+def _finite(x, default: float = 0.0) -> float:
+    try:
+        v = float(x)
+        return v if math.isfinite(v) else float(default)
+    except Exception:
+        return float(default)
+
+
 DDL = """
 CREATE TABLE IF NOT EXISTS shadow_positions (
   position_id TEXT PRIMARY KEY,
@@ -139,7 +147,7 @@ class ShadowLedger:
         cash = self.cash()
         for c in selected:
             entity = str(c.get("entity_key") or "")
-            cost = float(c.get("acquisition_cost") or 0.0)
+            cost = _finite(c.get("acquisition_cost"), 0.0)
             if not entity or entity in existing or cost <= 0 or cost > cash:
                 continue
             pid = uuid.uuid4().hex[:20]
@@ -169,8 +177,8 @@ class ShadowLedger:
                     str(c.get("exit_source") or ""),
                     _now(),
                     cost,
-                    float(c.get("lcb_net_roi") or 0.0),
-                    float(c.get("expected_holding_days") or 365.0),
+                    _finite(c.get("lcb_net_roi"), 0.0),
+                    _finite(c.get("expected_holding_days"), 365.0),
                     int(bool(c.get("locked"))),
                     json.dumps(meta, ensure_ascii=False),
                 ),
@@ -181,36 +189,90 @@ class ShadowLedger:
         self.db.commit()
         return opened
 
+    @staticmethod
+    def _candidate_executable_value(c: dict) -> float | None:
+        """Current executable *net EUR value*, independent of position entry cost."""
+        if not bool(c.get("locked")):
+            return None
+
+        explicit = _finite(c.get("locked_exit_net"), 0.0)
+        if explicit > 0:
+            return explicit
+
+        bid = _finite(c.get("locked_exit_bid"), 0.0)
+        if bid > 0:
+            fee = max(0.0, min(0.99, _finite(c.get("exit_fee_rate"), 0.0)))
+            costs = (
+                _finite(c.get("exit_fixed"), 0.0)
+                + _finite(c.get("exit_shipping"), 0.0)
+                + _finite(c.get("authentication_cost"), 0.0)
+                + _finite(c.get("fx_cost"), 0.0)
+                + _finite(c.get("repair_cost"), 0.0)
+                + _finite(c.get("expected_return_loss"), 0.0)
+                + _finite(c.get("expected_fraud_loss"), 0.0)
+                + _finite(c.get("exit_tax"), 0.0)
+            )
+            value = bid * (1.0 - fee) - costs
+            return value if math.isfinite(value) and value > 0 else None
+
+        # Backward compatibility for stored/hand-built candidates that only carry
+        # locked ROI. Crucially, use the candidate's own acquisition denominator,
+        # never the historical position entry cost.
+        if c.get("locked_net_roi") is not None:
+            candidate_cost = _finite(c.get("acquisition_cost"), 0.0)
+            roi = _finite(c.get("locked_net_roi"), 0.0)
+            value = candidate_cost * (1.0 + roi)
+            return value if candidate_cost > 0 and value > 0 else None
+        return None
+
     def mark(self, candidates: list[dict]) -> None:
-        by_entity: dict[str, dict] = {}
+        by_entity: dict[str, list[dict]] = {}
         for c in candidates:
             e = str(c.get("entity_key") or "")
             if not e:
                 continue
-            prev = by_entity.get(e)
-            if prev is None or float(c.get("score_per_capital_day") or -1e9) > float(prev.get("score_per_capital_day") or -1e9):
-                by_entity[e] = c
+            by_entity.setdefault(e, []).append(c)
 
         now = _now()
         for p in self.open_positions():
-            c = by_entity.get(str(p["entity_key"]))
-            if c is None:
-                mark_value = float(p["entry_cost"])
+            rows = by_entity.get(str(p["entity_key"]), [])
+            entry = float(p["entry_cost"])
+            if not rows:
+                mark_value = entry
                 executable_value = None
                 meta = {"reason": "no_fresh_candidate"}
             else:
-                mark_value = max(0.0, float(c.get("expected_exit_net") or p["entry_cost"]))
-                executable_value = None
-                if c.get("locked_net_roi") is not None and bool(c.get("locked")):
-                    executable_value = float(p["entry_cost"]) * (
-                        1.0 + float(c.get("locked_net_roi") or 0.0)
-                    )
+                # The current owner no longer cares which listing would be the
+                # best *new buy*. Mark the position against the best available net
+                # exit route for that already-owned economic object.
+                mark_rows = [
+                    (_finite(c.get("expected_exit_net"), 0.0), c)
+                    for c in rows
+                    if _finite(c.get("expected_exit_net"), 0.0) > 0
+                ]
+                if mark_rows:
+                    mark_value, mark_c = max(mark_rows, key=lambda x: x[0])
+                else:
+                    mark_value, mark_c = entry, rows[0]
+
+                exec_rows = []
+                for c in rows:
+                    value = self._candidate_executable_value(c)
+                    if value is not None:
+                        exec_rows.append((value, c))
+                if exec_rows:
+                    executable_value, exec_c = max(exec_rows, key=lambda x: x[0])
+                else:
+                    executable_value, exec_c = None, None
+
                 meta = {
-                    "lcb_net_roi": c.get("lcb_net_roi"),
-                    "confidence": c.get("ensemble_confidence"),
-                    "reason": c.get("reason"),
+                    "lcb_net_roi": mark_c.get("lcb_net_roi"),
+                    "confidence": mark_c.get("ensemble_confidence"),
+                    "reason": mark_c.get("reason"),
+                    "mark_exit_source": mark_c.get("exit_source"),
+                    "executable_exit_source": exec_c.get("exit_source") if exec_c else None,
                 }
-            entry = float(p["entry_cost"])
+
             self.db.execute(
                 "INSERT OR REPLACE INTO shadow_marks VALUES (?,?,?,?,?,?,?)",
                 (
@@ -258,7 +320,7 @@ class ShadowLedger:
             if entry_dt is None:
                 continue
             age_days = max(0.0, (now - entry_dt).total_seconds() / 86400.0)
-            min_exit_days = max(0.0, float(p.get("min_exit_days") or 1.0))
+            min_exit_days = max(0.0, _finite(p.get("min_exit_days"), 1.0))
             if age_days < min_exit_days:
                 continue
             _, exe = self.latest_mark(str(p["position_id"]))
@@ -266,9 +328,12 @@ class ShadowLedger:
                 continue
             entry = float(p["entry_cost"])
             roi = float(exe) / max(entry, 1e-9) - 1.0
-            expected = max(1.0, float(p.get("expected_days") or 30.0))
-            entry_lcb = max(0.0, float(p.get("entry_lcb_roi") or 0.0))
-            initial_target = min(max_initial_target_roi, max(min_take_profit_roi, 0.5 * entry_lcb))
+            expected = max(1.0, _finite(p.get("expected_days"), 30.0))
+            entry_lcb = max(0.0, _finite(p.get("entry_lcb_roi"), 0.0))
+            initial_target = min(
+                max_initial_target_roi,
+                max(min_take_profit_roi, 0.5 * entry_lcb),
+            )
             target = max(
                 min_take_profit_roi,
                 initial_target * math.exp(-age_days / expected),
@@ -323,7 +388,7 @@ class ShadowLedger:
             entry_dt = _parse(str(p.get("entry_at") or ""))
             if entry_dt is not None:
                 age = max(0.0, (now - entry_dt).total_seconds() / 86400.0)
-                expected = max(1.0, float(p.get("expected_days") or 30.0))
+                expected = max(1.0, _finite(p.get("expected_days"), 30.0))
                 if age >= min(14.0, 0.75 * expected):
                     aged_capital += float(p["entry_cost"])
         nav = cash + mark_total

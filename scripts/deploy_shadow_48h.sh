@@ -21,8 +21,13 @@ cd "$ROOT"
 [ -f .env ] || cp .env.example .env
 mkdir -p data outputs/live
 
-# First experiment is intentionally fresh and bounded.
-rm -f data/roman_snapshots.sqlite data/roman_tracking.sqlite outputs/live/dashboard.json
+# First experiment is intentionally fresh and bounded. Reset all state that can
+# carry information, positions or P&L across shadow runs.
+rm -f \
+  data/roman_snapshots.sqlite \
+  data/roman_tracking.sqlite \
+  data/roman_shadow.sqlite \
+  outputs/live/dashboard.json
 
 docker compose down --remove-orphans || true
 docker compose build --pull
