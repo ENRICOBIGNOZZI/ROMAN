@@ -6,7 +6,7 @@ from .access_policy import (
 )
 from .base import FeedAdapter, RawListing
 from .csv_feed import CSVFeed
-from .registry import load_source_registry, official_adapters
+from .registry import load_source_registry, official_adapters, reference_adapters
 
 __all__ = [
     "RawListing",
@@ -14,6 +14,7 @@ __all__ = [
     "CSVFeed",
     "load_source_registry",
     "official_adapters",
+    "reference_adapters",
     "MarketAccessPolicy",
     "market_access_registry",
     "automated_sources",
