@@ -37,11 +37,12 @@ def load_source_registry(path=None):
 
 
 def official_adapters():
-    """Authorized/contracted adapters only.
+    """Authorized adapters that return concrete market/retail listings.
 
-    This function intentionally does not create scraper adapters for marketplaces
-    whose current terms prohibit automated extraction. Those markets remain in
-    the access-policy registry until explicit permission/partner access exists.
+    Reference-price APIs deliberately live in ``reference_adapters`` so a guide
+    price or marketplace statistic cannot accidentally become a buy/exit route.
+    This function also intentionally excludes scraper adapters for marketplaces
+    whose current terms prohibit automated extraction without permission.
     """
     adapters = {
         "ebay": EbayBrowseFeed(),
@@ -50,14 +51,8 @@ def official_adapters():
         "etsy": EtsyFeed(),
         "rakuten_ichiba": RakutenIchibaFeed(),
         "ricardo": RicardoSearchFeed(),
-        "pricecharting": PriceChartingFeed(),
-        "bricklink": BrickLinkPriceGuideFeed(),
-        "discogs": DiscogsReferenceFeed(),
-        "tcgapi": TCGReferenceFeed(),
+        "pricecharting": PriceChartingFeed(include_reference_fallback=False),
     }
-    # Mercado Libre site adapters are read-only but credential-gated. Without an
-    # authorized MELI_ACCESS_TOKEN they remain NO_CREDENTIALS/PRE-SHADOW rather
-    # than repeatedly treating auth failures as market-data observations.
     for site, suffix in (
         ("MLM", "mx"),
         ("MLA", "ar"),
@@ -69,3 +64,16 @@ def official_adapters():
         name = f"mercadolibre_{suffix}"
         adapters[name] = MercadoLibreFeed(site_id=site, source_name=name)
     return adapters
+
+
+def reference_adapters():
+    """Authorized valuation/reference feeds, never executable routes."""
+    return {
+        "bricklink_reference": BrickLinkPriceGuideFeed(),
+        "discogs_reference": DiscogsReferenceFeed(),
+        "tcgapi_reference": TCGReferenceFeed(),
+        "pricecharting_reference": PriceChartingFeed(
+            include_marketplace_offers=False,
+            include_reference_fallback=True,
+        ),
+    }
