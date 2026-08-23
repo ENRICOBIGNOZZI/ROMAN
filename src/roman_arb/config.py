@@ -8,6 +8,10 @@ def config_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "config"
 
 
+def policy_config_path() -> Path:
+    return config_dir() / "markets.json"
+
+
 def default_config_path() -> Path:
     maximal = config_dir() / "maximal_catalog.json"
     packed = config_dir() / "maximal_catalog.json.z64"
@@ -15,7 +19,16 @@ def default_config_path() -> Path:
         return maximal
     if packed.exists():
         return packed
-    return config_dir() / "markets.json"
+    return policy_config_path()
+
+
+def _read_json_or_z64(p: Path) -> dict:
+    if p.name.endswith(".z64"):
+        import base64, zlib
+        return json.loads(
+            zlib.decompress(base64.b64decode(p.read_text().strip())).decode("utf-8")
+        )
+    return json.loads(p.read_text())
 
 
 def _expand_catalog(raw: dict) -> list[dict]:
@@ -42,11 +55,20 @@ def load_config(path: str | Path | None = None):
     # scripts/tests. The maximal packed catalog is now the canonical superset.
     if path is not None and not p.exists() and p.name in {"markets_expanded.json", "markets_maximal.json"}:
         p = default_config_path()
-    if p.name.endswith(".z64"):
-        import base64, zlib
-        raw = json.loads(zlib.decompress(base64.b64decode(p.read_text().strip())).decode("utf-8"))
-    else:
-        raw = json.loads(p.read_text())
+
+    raw = _read_json_or_z64(p)
+
+    # Universe/catalog and capital policy are different concerns. The packed
+    # maximal catalog may be regenerated to add hundreds of markets, but that
+    # must never silently resurrect stale leverage/liquidity assumptions. For the
+    # default load, markets.json is the authoritative risk-policy overlay.
+    if path is None and p != policy_config_path() and policy_config_path().exists():
+        policy = _read_json_or_z64(policy_config_path())
+        raw["assumptions"] = {
+            **dict(raw.get("assumptions", {})),
+            **dict(policy.get("assumptions", {})),
+        }
+
     venues = {k: Venue(key=k, **v) for k, v in raw["venues"].items()}
     sectors = {}
     sector_rows = _expand_catalog(raw) if "templates" in raw else raw["sectors"]
