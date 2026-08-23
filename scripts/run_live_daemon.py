@@ -16,7 +16,31 @@ class State:
     lock=threading.Lock()
 
 
+def normalize_payload(p: dict) -> dict:
+    q=dict(p)
+    ops=[]
+    for x in q.get("opportunities",[]) or []:
+        ops.append({
+            "entity":x.get("entity"),"buy_source":x.get("buy_source"),"exit_source":x.get("exit_source"),
+            "acquisition_cost":x.get("acquisition_cost",x.get("cost",0)),
+            "net_edge_roi":x.get("net_edge_roi",x.get("net_edge",0)),
+            "lcb_net_roi":x.get("lcb_net_roi",x.get("lcb_roic",0)),
+            "expected_days":x.get("expected_days",0),
+            "score_per_capital_day":x.get("score_per_capital_day",x.get("score_day",0)),
+            "confidence":x.get("confidence",0),"qualified":x.get("qualified",False),"url":x.get("url","")
+        })
+    q["opportunities"]=ops
+    feeds=[]
+    for x in q.get("feeds",[]) or []:
+        raw=str(x.get("status","waiting")).upper()
+        status="active" if raw in ("OK","ACTIVE") else "error" if raw in ("ERROR","FAILED") else "waiting" if raw in ("NO_CREDENTIALS","WAITING") else "partial"
+        feeds.append({"name":x.get("name",x.get("source","unknown")),"status":status,"rows":x.get("rows",0),"last_update":x.get("last_update",x.get("last",""))})
+    q["feeds"]=feeds
+    return q
+
+
 def handler_factory(state):
+    html_path=Path("docs/index.html")
     class Handler(BaseHTTPRequestHandler):
         def _send(self,code,body,ctype="application/json; charset=utf-8"):
             self.send_response(code); self.send_header("Content-Type",ctype); self.send_header("Access-Control-Allow-Origin","*"); self.send_header("Cache-Control","no-store,max-age=0"); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
@@ -27,9 +51,12 @@ def handler_factory(state):
             if path=="/health":
                 with state.lock: p={"ok":not bool(state.error),"status":state.payload.get("status"),"error":state.error}
                 return self._send(200,json.dumps(p).encode())
-            if path in ("/dashboard.json","/api/dashboard","/"):
-                with state.lock: p=dict(state.payload)
+            if path in ("/dashboard.json","/api/dashboard"):
+                with state.lock: p=normalize_payload(state.payload)
                 return self._send(200,json.dumps(p,ensure_ascii=False).encode())
+            if path in ("/", "/index.html"):
+                if html_path.exists(): return self._send(200,html_path.read_bytes(),"text/html; charset=utf-8")
+                return self._send(404,b"dashboard html missing","text/plain; charset=utf-8")
             self._send(404,b'{"error":"not found"}')
         def log_message(self,*_): return
     return Handler
@@ -44,7 +71,7 @@ def main():
     state=State(); state.payload.update(capital=args.capital,nav=args.capital)
     server=ThreadingHTTPServer(("0.0.0.0",args.health_port),handler_factory(state)); threading.Thread(target=server.serve_forever,daemon=True).start()
     deadline=time.time()+args.max_hours*3600 if args.max_hours>0 else None
-    print(f"Reselling BOT shadow-live | capital=EUR {args.capital:.2f} | API http://0.0.0.0:{args.health_port}/dashboard.json",flush=True)
+    print(f"Reselling BOT shadow-live | capital=EUR {args.capital:.2f} | dashboard http://0.0.0.0:{args.health_port}/",flush=True)
     try:
         while True:
             t0=time.time()
@@ -59,6 +86,6 @@ def main():
             time.sleep(max(1,args.interval-int(time.time()-t0)))
     finally:
         with state.lock: state.payload=dict(state.payload,status="SHADOW-COMPLETE")
-        Path(args.dashboard).parent.mkdir(parents=True,exist_ok=True); Path(args.dashboard).write_text(json.dumps(state.payload,indent=2,ensure_ascii=False)); server.shutdown()
+        Path(args.dashboard).parent.mkdir(parents=True,exist_ok=True); Path(args.dashboard).write_text(json.dumps(normalize_payload(state.payload),indent=2,ensure_ascii=False)); server.shutdown()
 
 if __name__=="__main__": main()
