@@ -15,8 +15,8 @@ from roman_arb.allocator import CapitalDayAllocator
 def test_hierarchical_fair_value_shrinks_sparse_product():
     m = HierarchicalFairValueModel()
     for p in [100, 101, 99, 102, 98, 100, 101, 99] * 4:
-        m.update(p, "cards", "pokemon", "")
-    m.update(140, "cards", "pokemon", "rare-card")
+        m.update(p, "cards", "pokemon", "", trusted=True)
+    m.update(140, "cards", "pokemon", "rare-card", trusted=True)
     est = m.predict("cards", "pokemon", "rare-card")
     assert est is not None
     assert 100 < est.price < 140
