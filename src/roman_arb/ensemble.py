@@ -19,14 +19,34 @@ class ConservativeEnsemble:
     """Agreement-gated ensemble for already-net ROI signals.
 
     Signals should already include venue fees, shipping, FX, authentication and
-    expected operational loss.  Locked/executable spread is treated separately:
-    it can bypass model agreement, but never seller/condition/liquidity gates.
+    expected operational loss. Seller, condition, liquidity and regime inputs are
+    *risk modifiers*, not literal probabilities that multiply expected profit.
+
+    A fresh locked/executable spread is a different economic object from an
+    inventory forecast. It can bypass model agreement and sale-hazard gating,
+    because an executable exit already supplies the liquidity evidence. Seller,
+    condition and regime safeguards still apply.
     """
 
-    def __init__(self, min_signal_roi: float = 0.004, min_agreement: float = 2 / 3, min_confidence: float = 0.22):
+    def __init__(
+        self,
+        min_signal_roi: float = 0.004,
+        min_agreement: float = 2 / 3,
+        min_confidence: float = 0.22,
+    ):
         self.min_signal_roi = float(min_signal_roi)
         self.min_agreement = float(min_agreement)
         self.min_confidence = float(min_confidence)
+
+    @staticmethod
+    def _clip01(x: float, default: float) -> float:
+        try:
+            v = float(x)
+            if not math.isfinite(v):
+                v = default
+        except Exception:
+            v = default
+        return max(0.0, min(1.0, v))
 
     def decide(
         self,
@@ -39,23 +59,54 @@ class ConservativeEnsemble:
         sale_prob_30d: float = 0.5,
         regime_weight: float = 1.0,
     ) -> EnsembleDecision:
-        model_signals = [float(x) for x in (fair_value_roi, factor_roi, anomaly_roi) if x is not None and math.isfinite(float(x))]
-        locked = float(locked_spread_roi) if locked_spread_roi is not None and math.isfinite(float(locked_spread_roi)) else None
+        model_signals = [
+            float(x)
+            for x in (fair_value_roi, factor_roi, anomaly_roi)
+            if x is not None and math.isfinite(float(x))
+        ]
+        locked = (
+            float(locked_spread_roi)
+            if locked_spread_roi is not None
+            and math.isfinite(float(locked_spread_roi))
+            else None
+        )
 
-        seller = max(0.0, min(1.0, float(seller_success_prob)))
-        condition = max(0.0, min(1.0, float(condition_risk)))
-        liquidity = max(0.0, min(1.0, float(sale_prob_30d)))
-        regime = max(0.0, min(1.0, float(regime_weight)))
-        quality_gate = seller * (1.0 - condition) * (0.35 + 0.65 * liquidity) * regime
+        seller = self._clip01(seller_success_prob, 0.5)
+        condition = self._clip01(condition_risk, 0.2)
+        liquidity = self._clip01(sale_prob_30d, 0.5)
+        regime = self._clip01(regime_weight, 0.55)
+
+        # These are bounded haircuts. An uncalibrated 50% seller posterior should
+        # not mechanically cut expected ROI in half; the separate seller model
+        # contributes an additive risk penalty in the stack's LCB calculation.
+        seller_gate = 0.75 + 0.25 * seller
+        condition_gate = 1.0 - 0.50 * condition
+        regime_gate = 0.70 + 0.30 * regime
+        liquidity_gate = 0.65 + 0.35 * liquidity
 
         if locked is not None and locked > self.min_signal_roi:
+            # Sale hazard is irrelevant once a fresh executable exit exists.
+            quality_gate = seller_gate * condition_gate * regime_gate
             conservative = locked * quality_gate
             conf = min(1.0, 0.65 + 0.35 * quality_gate)
-            trade = conservative > self.min_signal_roi and seller >= 0.45 and condition <= 0.65
-            return EnsembleDecision(trade, locked, conservative, conf, 1.0, "locked_executable" if trade else "locked_but_quality_gate")
+            trade = (
+                conservative > self.min_signal_roi
+                and seller >= 0.45
+                and condition <= 0.65
+            )
+            return EnsembleDecision(
+                trade,
+                locked,
+                conservative,
+                conf,
+                1.0,
+                "locked_executable" if trade else "locked_but_quality_gate",
+            )
 
         if len(model_signals) < 2:
-            return EnsembleDecision(False, 0.0, 0.0, 0.0, 0.0, "insufficient_model_agreement")
+            return EnsembleDecision(
+                False, 0.0, 0.0, 0.0, 0.0, "insufficient_model_agreement"
+            )
 
         positives = sum(x > self.min_signal_roi for x in model_signals)
         agreement = positives / len(model_signals)
@@ -64,6 +115,8 @@ class ConservativeEnsemble:
         q25 = float(np.quantile(arr, 0.25))
         med = float(np.median(arr))
         expected = 0.5 * q25 + 0.5 * med
+
+        quality_gate = seller_gate * condition_gate * liquidity_gate * regime_gate
         conservative = expected * quality_gate
         conf = agreement * quality_gate
 
