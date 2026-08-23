@@ -2,30 +2,121 @@ from __future__ import annotations
 
 import json
 import math
+import os
 
+from .feeds import reference_adapters
 from .live import ShadowLiveEngine as _BaseShadowLiveEngine
 from .shadow_ledger import ShadowLedger
+from .snapshot import SnapshotStore
+
+
+_VIDEO_GAME_QUERIES = [
+    "EarthBound Super Nintendo",
+    "Chrono Trigger Super Nintendo",
+    "Pokemon Emerald GameBoy Advance",
+    "Zelda Ocarina of Time Nintendo 64",
+    "Super Mario 64 Nintendo 64",
+    "Pokemon Red GameBoy",
+    "Nintendo Switch OLED",
+    "PlayStation 5 Slim",
+]
+
+_RICARDO_SEEDS = [
+    "Rolex 124270",
+    "Omega Speedmaster 310.30.42.50.01.001",
+    "LEGO 75192",
+    "LEGO 10307",
+    "Pokemon Charizard PSA 10",
+    "Pokemon 151 booster box",
+    "Nike Jordan 1 Chicago",
+    "Sony FE 24-70 GM II",
+    "Nintendo Switch OLED",
+    "iPhone 15 Pro 256GB",
+    "RTX 4090",
+    "Fender American Professional II Stratocaster",
+]
+
+_REFERENCE_QUERIES = {
+    "bricklink_reference": [
+        "LEGO 75192",
+        "LEGO 10307",
+        "LEGO 10294",
+        "LEGO 42143",
+    ],
+    "discogs_reference": [
+        "Pink Floyd Dark Side of the Moon vinyl",
+        "The Beatles Abbey Road vinyl",
+        "Daft Punk Discovery vinyl",
+        "Nirvana Nevermind vinyl",
+    ],
+    "tcgapi_reference": [
+        "Pokemon 151 booster box",
+        "Pokemon Evolving Skies booster box",
+        "Magic The Gathering booster box",
+        "One Piece booster box",
+    ],
+    "pricecharting_reference": _VIDEO_GAME_QUERIES,
+}
 
 
 class ShadowLiveEngine(_BaseShadowLiveEngine):
-    """Canonical production/shadow engine with a closed-outcome feedback loop.
+    """Canonical production/shadow engine with trusted multi-source ingestion.
 
-    The base live engine owns collection, scoring, FDR, allocation and ledger
-    mechanics. This production boundary adds the invariants that must remain true
-    in the deployed path:
+    The base live engine owns concrete market collection, scoring, FDR,
+    allocation and ledger mechanics. This production boundary adds invariants:
 
     1. keep the exact scored candidate set that produced ledger marks;
     2. learn online only from positions the ledger actually closes against fresh
        executable evidence from the same exit route;
-    3. expose expected net ROI separately from its lower-confidence bound.
-
-    Current asks, model marks and repeated locked quotes never become persistent
-    fair-value observations merely because they were seen.
+    3. expose expected net ROI separately from its lower-confidence bound;
+    4. collect valuation-only APIs into a separate reference database so they can
+       never accidentally become acquisition or exit routes.
     """
 
     def __init__(self, *args, **kwargs):
+        self.reference_snapshot_db = str(
+            kwargs.pop("reference_snapshot_db", "data/roman_reference.sqlite")
+        )
         super().__init__(*args, **kwargs)
         self._last_scored_candidates: list[dict] = []
+        self.reference_adapters = reference_adapters()
+        self.reference_feed_state: dict[str, dict] = {}
+        self.reference_every_cycles = max(
+            1, int(os.getenv("ROMAN_REFERENCE_EVERY_CYCLES", "12"))
+        )
+        self._reference_cycle_no = 0
+
+        # The packed source catalog predates these new authorized feeds. Inject
+        # explicit plans here so they are usable immediately without weakening
+        # source policy or broadening every vertical indiscriminately.
+        sector_names = [s.name for s in self.sectors.values()]
+        self.plan["ricardo"] = list(dict.fromkeys(_RICARDO_SEEDS + sector_names))
+        self.plan["pricecharting"] = list(_VIDEO_GAME_QUERIES)
+
+    def _sector(self, row):
+        source = str(row.get("source") or "").lower()
+        if source == "pricecharting":
+            extra = row.get("extra") or {}
+            genre = str(extra.get("genre") or "").lower()
+            title = str(row.get("title") or "").lower()
+            if genre == "systems" or any(
+                token in title
+                for token in (
+                    "console",
+                    "system",
+                    "handheld",
+                    "switch oled",
+                    "playstation 5",
+                    "ps5",
+                    "xbox series",
+                )
+            ):
+                sector = self.sectors.get("consoles")
+            else:
+                sector = self.sectors.get("retro_games")
+            if sector is not None:
+                return sector.key, sector.family
+        return super()._sector(row)
 
     def build_candidates(self):
         rows = super().build_candidates()
@@ -38,6 +129,52 @@ class ShadowLiveEngine(_BaseShadowLiveEngine):
                 )
         self._last_scored_candidates = rows
         return rows
+
+    def collect_reference_cycle(self) -> dict[str, int]:
+        """Collect authorized valuation feeds at a slower cadence.
+
+        Rows are stored in a physically separate SQLite database. They are not
+        read by ``build_candidates`` and therefore cannot create a trade merely
+        because a guide/statistic reports a high value.
+        """
+        should_collect = self._reference_cycle_no % self.reference_every_cycles == 0
+        self._reference_cycle_no += 1
+        if not should_collect:
+            return {}
+
+        store = SnapshotStore(self.reference_snapshot_db)
+        counts: dict[str, int] = {}
+        try:
+            for source, adapter in self.reference_adapters.items():
+                if not adapter.available():
+                    self.reference_feed_state[source] = {
+                        "status": "NO_CREDENTIALS",
+                        "rows": 0,
+                    }
+                    continue
+                total = 0
+                error = ""
+                queries = _REFERENCE_QUERIES.get(source, [])
+                for query in queries[: max(1, min(self.queries_per_source, 2))]:
+                    try:
+                        rows = list(
+                            adapter.fetch(query, limit=min(self.rows_per_query, 20))
+                        )
+                        store.append(rows)
+                        total += len(rows)
+                    except Exception as exc:
+                        error = str(exc)[:240]
+                counts[source] = total
+                self.reference_feed_state[source] = {
+                    "status": "OK"
+                    if not error
+                    else ("PARTIAL" if total else "ERROR"),
+                    "rows": total,
+                    "error": error,
+                }
+        finally:
+            store.close()
+        return counts
 
     @staticmethod
     def _finite(value, default: float = 0.0) -> float:
@@ -161,16 +298,27 @@ class ShadowLiveEngine(_BaseShadowLiveEngine):
         legacy = status.pop("Conservative ensemble", None)
         status["Unified predictive LCB"] = legacy or "ONLINE"
         payload["model_status"] = status
+        payload["reference_feeds"] = [
+            dict(source=key, **value)
+            for key, value in sorted(self.reference_feed_state.items())
+        ]
         return payload
 
     def run_cycle(self, fdr_alpha: float | None = None):
         payload = super().run_cycle(fdr_alpha=fdr_alpha)
+        reference_counts = self.collect_reference_cycle()
         learned = self._learn_closed_outcomes(
             list(payload.get("closed_this_cycle") or [])
         )
         diagnostics = dict(payload.get("diagnostics") or {})
         diagnostics["learned_closed_outcomes"] = learned
+        diagnostics["reference_rows_this_cycle"] = sum(reference_counts.values())
+        diagnostics["reference_cycle_counts"] = reference_counts
         payload["diagnostics"] = diagnostics
+        payload["reference_feeds"] = [
+            dict(source=key, **value)
+            for key, value in sorted(self.reference_feed_state.items())
+        ]
 
         # Learning happens after the close event, so refresh the model status and
         # persist the final telemetry for this cycle.
