@@ -22,9 +22,10 @@ cd "$ROOT"
 mkdir -p data outputs/live
 
 # First experiment is intentionally fresh and bounded. Reset all state that can
-# carry information, positions or P&L across shadow runs.
+# carry information, positions, reference marks or P&L across shadow runs.
 rm -f \
   data/roman_snapshots.sqlite \
+  data/roman_reference.sqlite \
   data/roman_tracking.sqlite \
   data/roman_shadow.sqlite \
   outputs/live/dashboard.json
