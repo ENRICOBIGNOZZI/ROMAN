@@ -9,4 +9,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -e '.[dev]'
+      - run: python -m compileall -q src scripts
+      - run: bash -n scripts/deploy_shadow_48h.sh scripts/deploy_shadow_native_2h.sh
+      - run: roman-live --help >/dev/null
+      - run: roman-sim --help >/dev/null
       - run: pytest -q

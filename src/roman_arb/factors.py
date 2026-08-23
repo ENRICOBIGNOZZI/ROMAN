@@ -11,6 +11,7 @@ class FactorFit:
     names: tuple[str, ...]
     center: np.ndarray
     scale: np.ndarray
+    standardized_mean: np.ndarray
     components: np.ndarray
     explained_variance_ratio: np.ndarray
     n_rows: int
@@ -35,16 +36,21 @@ class RobustPCAFactorModel:
 
     The model is deliberately an overlay rather than a standalone trading signal.
     It removes common movements from homogeneous return series and reports the
-    idiosyncratic residual.  Confidence is shrunk toward zero when history is
-    short, so a newly started shadow run cannot manufacture alpha from an
-    underidentified factor model.
+    idiosyncratic residual. Confidence is shrunk toward zero when history is
+    short or contemporaneous coverage is sparse, so a newly started shadow run
+    cannot manufacture alpha from an underidentified factor model.
 
-    Missing observations should be represented by ``np.nan``.  The estimator:
+    Missing observations should be represented by ``np.nan``. The estimator:
       1. winsorizes each series using median/MAD;
       2. standardizes series robustly;
       3. fills missing standardized returns with zero (the robust center);
-      4. fits PCA via SVD;
-      5. chooses the smallest rank reaching ``variance_target`` subject to caps.
+      4. stores and removes the remaining time-series mean;
+      5. fits PCA via SVD;
+      6. chooses the smallest rank reaching ``variance_target`` subject to caps.
+
+    The stored standardized mean is essential: training and live scoring must use
+    exactly the same centering transformation. Otherwise unconditional drift can
+    leak into the residual and be mistaken for idiosyncratic alpha.
     """
 
     def __init__(
@@ -87,7 +93,7 @@ class RobustPCAFactorModel:
             self._resid_scale = None
             return None
 
-        # Require each series to have enough actual observations.  This avoids a
+        # Require each series to have enough actual observations. This avoids a
         # large sparse universe creating unstable components through zero-filling.
         observed = np.sum(np.isfinite(x), axis=0)
         keep = observed >= max(6, self.min_rows // 3)
@@ -103,9 +109,11 @@ class RobustPCAFactorModel:
         z = np.clip(z, -self.winsor_z, self.winsor_z)
         z = np.where(np.isfinite(z), z, 0.0)
 
-        # Remove any remaining time-series mean before SVD.
-        z = z - np.mean(z, axis=0, keepdims=True)
-        _, s, vt = np.linalg.svd(z, full_matrices=False)
+        # PCA is a centered covariance model. Store this second-stage mean and
+        # reuse it during live scoring; dropping it creates a train/test mismatch.
+        standardized_mean = np.mean(z, axis=0)
+        z_centered = z - standardized_mean
+        _, s, vt = np.linalg.svd(z_centered, full_matrices=False)
         eigen = s * s
         total = float(np.sum(eigen))
         if not math.isfinite(total) or total <= 1e-12:
@@ -125,23 +133,24 @@ class RobustPCAFactorModel:
             names=names,
             center=center,
             scale=scale,
+            standardized_mean=standardized_mean.copy(),
             components=components,
             explained_variance_ratio=evr[:rank].copy(),
             n_rows=int(x.shape[0]),
         )
         self.fit_ = fit
 
-        fitted = self._common_standardized(z)
-        resid = (z - fitted) * scale
+        fitted = self._common_standardized(z_centered)
+        resid = (z_centered - fitted) * scale
         _, resid_scale = self._robust_center_scale(resid)
         self._resid_scale = resid_scale
         return fit
 
-    def _common_standardized(self, standardized: np.ndarray) -> np.ndarray:
+    def _common_standardized(self, standardized_centered: np.ndarray) -> np.ndarray:
         if self.fit_ is None:
             raise RuntimeError("factor model is not fitted")
         c = self.fit_.components
-        return (standardized @ c.T) @ c
+        return (standardized_centered @ c.T) @ c
 
     def signals(self, latest_returns: dict[str, float]) -> list[ResidualSignal]:
         if self.fit_ is None or self._resid_scale is None:
@@ -156,14 +165,19 @@ class RobustPCAFactorModel:
         z = np.clip(z, -self.winsor_z, self.winsor_z)
         # Missing contemporaneous returns are neutralized at the robust center.
         z_filled = np.where(np.isfinite(z), z, 0.0)
-        common_z = self._common_standardized(z_filled[None, :])[0]
-        common = common_z * f.scale
+        z_centered = z_filled - f.standardized_mean
+        common_centered = self._common_standardized(z_centered[None, :])[0]
+
+        # Reconstruct in raw-return units. Both the robust location and the
+        # second-stage PCA mean must be restored before computing the residual.
+        common = f.center + (f.standardized_mean + common_centered) * f.scale
         residual = raw - common
         residual_z = residual / np.maximum(self._resid_scale, 1e-8)
 
-        # Sample-size shrinkage.  At 48 rows confidence is 0.5; it approaches one
-        # only after substantial forward history.
-        conf = f.n_rows / (f.n_rows + self.confidence_half_life_rows)
+        # Sample-size and contemporaneous-coverage shrinkage.
+        sample_conf = f.n_rows / (f.n_rows + self.confidence_half_life_rows)
+        coverage_conf = float(np.sum(available)) / max(len(available), 1)
+        conf = sample_conf * coverage_conf
         out: list[ResidualSignal] = []
         for i, name in enumerate(f.names):
             if not available[i]:
@@ -193,7 +207,7 @@ def residual_discount_overlay(
 
     A negative residual return means the item/series fell relative to its common
     factors; if the base valuation model already identifies it as cheap, this can
-    modestly strengthen the signal.  PCA is never allowed to create more than
+    modestly strengthen the signal. PCA is never allowed to create more than
     ``max_adjustment`` of discount by itself.
     """
     z = float(np.clip(residual_z / max(z_saturation, 1e-9), -1.0, 1.0))
