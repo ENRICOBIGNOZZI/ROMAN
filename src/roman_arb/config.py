@@ -38,6 +38,10 @@ def _expand_catalog(raw: dict) -> list[dict]:
 
 def load_config(path: str | Path | None = None):
     p = Path(path) if path else default_config_path()
+    # Backward compatibility with the earlier expanded-catalog filename used by
+    # scripts/tests. The maximal packed catalog is now the canonical superset.
+    if path is not None and not p.exists() and p.name in {"markets_expanded.json", "markets_maximal.json"}:
+        p = default_config_path()
     if p.name.endswith(".z64"):
         import base64, zlib
         raw = json.loads(zlib.decompress(base64.b64decode(p.read_text().strip())).decode("utf-8"))
