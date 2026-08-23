@@ -11,11 +11,13 @@ class ShadowLiveEngine(_BaseShadowLiveEngine):
     """Canonical production/shadow engine with a closed-outcome feedback loop.
 
     The base live engine owns collection, scoring, FDR, allocation and ledger
-    mechanics. This thin production boundary adds only two invariants:
+    mechanics. This production boundary adds the invariants that must remain true
+    in the deployed path:
 
-    1. keep the exact scored candidate set that produced the ledger marks;
-    2. learn online only from positions that the ledger actually closes against
-       fresh executable evidence.
+    1. keep the exact scored candidate set that produced ledger marks;
+    2. learn online only from positions the ledger actually closes against fresh
+       executable evidence;
+    3. expose expected net ROI separately from its lower-confidence bound.
 
     Current asks, model marks and repeated locked quotes never become persistent
     fair-value observations merely because they were seen.
@@ -104,6 +106,34 @@ class ShadowLiveEngine(_BaseShadowLiveEngine):
 
     def dashboard_payload(self, candidates, basket):
         payload = super().dashboard_payload(candidates, basket)
+
+        # The base dashboard historically called the conservative LCB `net_edge`.
+        # Production telemetry must distinguish the predictive mean from its risk
+        # bound. The base opportunity list follows candidates[:40] in the same
+        # order, so no fuzzy entity lookup is needed here.
+        for opportunity, candidate in zip(
+            payload.get("opportunities") or [], candidates[:40]
+        ):
+            cost = self._finite(candidate.get("acquisition_cost"), 0.0)
+            expected_exit = self._finite(candidate.get("expected_exit_net"), 0.0)
+            expected_roi = (
+                (expected_exit - cost) / cost
+                if cost > 0 and expected_exit > 0
+                else 0.0
+            )
+            opportunity["net_edge"] = expected_roi
+            opportunity["expected_net_roi"] = expected_roi
+            opportunity["lcb_roic"] = self._finite(
+                candidate.get("lcb_net_roi"), -1.0
+            )
+            opportunity["confidence"] = self._finite(
+                candidate.get(
+                    "predictive_confidence",
+                    candidate.get("ensemble_confidence", 0.0),
+                ),
+                0.0,
+            )
+
         status = dict(payload.get("model_status") or {})
         legacy = status.pop("Conservative ensemble", None)
         status["Unified predictive LCB"] = legacy or "ONLINE"
