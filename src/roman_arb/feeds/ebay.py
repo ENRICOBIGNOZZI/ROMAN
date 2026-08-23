@@ -62,6 +62,16 @@ class EbayBrowseFeed:
             },
         )
 
+    @staticmethod
+    def _global_key(x: dict) -> str:
+        gtin = str(x.get("gtin") or "").strip()
+        if gtin:
+            return f"gtin:{gtin}"
+        epid = str(x.get("epid") or "").strip()
+        if epid:
+            return f"epid:{epid}"
+        return ""
+
     def fetch(self, query: str, limit: int = 50):
         token = self._access_token()
         try:
@@ -75,6 +85,10 @@ class EbayBrowseFeed:
         out = []
         for x in data.get("itemSummaries", []):
             price = x.get("price") or {}
+            global_key = self._global_key(x)
+            extra = dict(x)
+            if global_key:
+                extra["global_product_key"] = global_key
             out.append(
                 RawListing(
                     source=self.name,
@@ -88,7 +102,8 @@ class EbayBrowseFeed:
                     category=((x.get("categories") or [{}])[0]).get(
                         "categoryName", ""
                     ),
-                    extra=x,
+                    product_key=global_key,
+                    extra=extra,
                 )
             )
         return out
