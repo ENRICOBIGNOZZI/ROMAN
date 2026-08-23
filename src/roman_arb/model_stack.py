@@ -43,6 +43,11 @@ class SimpleModelStack:
     Candidate monetary fields are assumed to be in one normalized currency
     (EUR in ROMAN after FX conversion). Every ROI produced here is *net* of the
     explicit costs supplied in the candidate dictionary.
+
+    Fair value and executable exit value are deliberately separate. Fair value is
+    a valuation state; expected PnL must be tied to a concrete exit route whenever
+    one is available. This prevents combining a high cross-market fair value with
+    the low fee schedule of a different venue to manufacture synthetic alpha.
     """
 
     def __init__(self, min_lcb_roi: float = 0.003, lcb_z: float = 1.28):
@@ -65,6 +70,26 @@ class SimpleModelStack:
             return x if math.isfinite(x) else float(default)
         except Exception:
             return float(default)
+
+    @staticmethod
+    def _weighted_median(values: list[tuple[float, float]]) -> float | None:
+        clean = sorted(
+            (float(v), max(0.0, float(w)))
+            for v, w in values
+            if math.isfinite(float(v))
+            and math.isfinite(float(w))
+            and float(v) > 0
+            and float(w) > 0
+        )
+        if not clean:
+            return None
+        total = sum(w for _, w in clean)
+        acc = 0.0
+        for value, weight in clean:
+            acc += weight
+            if acc >= 0.5 * total:
+                return value
+        return clean[-1][0]
 
     def observe_execution(
         self,
@@ -112,6 +137,66 @@ class SimpleModelStack:
     def update_dynamic_factors(self, factor_returns: dict[str, float]):
         return self.dynamic_factors.update(factor_returns)
 
+    def _selected_route_net(
+        self,
+        c: dict,
+        *,
+        exit_source: str,
+        condition_haircut: float,
+        exit_fee_rate: float,
+        exit_fixed: float,
+        exit_shipping: float,
+        additional_exit_costs: float,
+    ) -> tuple[float | None, float | None]:
+        """Return (net proceeds, implied gross ask) for the selected exit route.
+
+        ``comparables_net`` in the live engine is already net of venue fee, fixed
+        fee and route shipping. We therefore must not subtract those costs again.
+        Operational expected losses remain additive after the route mark.
+        """
+        explicit = self._f(c, "planned_exit_net", 0.0)
+        if explicit > 0:
+            return max(0.0, explicit - additional_exit_costs), None
+
+        comps = c.get("comparables_net")
+        if not isinstance(comps, list) or not exit_source:
+            return None, None
+
+        vals: list[tuple[float, float]] = []
+        for row in comps:
+            if not isinstance(row, dict) or str(row.get("source") or "") != exit_source:
+                continue
+            try:
+                net_value = float(row.get("net_value") or 0.0)
+                fresh = float(row.get("freshness") or 0.0)
+                exec_conf = float(row.get("executable_confidence") or 0.0)
+            except Exception:
+                continue
+            if not all(math.isfinite(x) for x in (net_value, fresh, exec_conf)) or net_value <= 0:
+                continue
+            # Require some real route evidence; freshness/confidence are both
+            # already in [0,1] in the live collector.
+            weight = max(0.01, fresh * max(exec_conf, 0.05))
+            vals.append((net_value, weight))
+
+        route_net = self._weighted_median(vals)
+        if route_net is None:
+            return None, None
+
+        conditioned_net = route_net * max(0.0, 1.0 - condition_haircut)
+        conditioned_net = max(0.0, conditioned_net - additional_exit_costs)
+
+        # Infer the route-specific gross mark only for liquidity pricing. The live
+        # net comparable already subtracts fee/fixed/shipping, so invert that map.
+        gross = None
+        denom = 1.0 - exit_fee_rate
+        if denom > 1e-6:
+            raw_route_net = route_net
+            gross = (raw_route_net + exit_fixed + exit_shipping) / denom
+            if not math.isfinite(gross) or gross <= 0:
+                gross = None
+        return conditioned_net, gross
+
     def score(self, c: dict) -> StackScore:
         buy_price = self._f(c, "buy_price")
         if buy_price <= 0:
@@ -150,24 +235,42 @@ class SimpleModelStack:
         )
         fair *= 1.0 - cond.haircut
 
+        exit_source = str(c.get("exit_source") or "")
         exit_fee_rate = self._f(c, "exit_fee_rate")
-        exit_costs = (
-            self._f(c, "exit_fixed")
-            + self._f(c, "exit_shipping")
-            + self._f(c, "authentication_cost")
+        exit_fixed = self._f(c, "exit_fixed")
+        exit_shipping = self._f(c, "exit_shipping")
+        additional_exit_costs = (
+            self._f(c, "authentication_cost")
             + self._f(c, "fx_cost")
             + self._f(c, "repair_cost")
             + self._f(c, "expected_return_loss")
             + self._f(c, "expected_fraud_loss")
             + self._f(c, "exit_tax")
         )
+        exit_costs = exit_fixed + exit_shipping + additional_exit_costs
+
+        # Fallback for non-live candidates: value the chosen route at the fair
+        # price. Live candidates with route evidence are overwritten below.
         exit_net = fair * (1.0 - exit_fee_rate) - exit_costs
+        route_net, route_gross = self._selected_route_net(
+            c,
+            exit_source=exit_source,
+            condition_haircut=cond.haircut,
+            exit_fee_rate=exit_fee_rate,
+            exit_fixed=exit_fixed,
+            exit_shipping=exit_shipping,
+            additional_exit_costs=additional_exit_costs,
+        )
+        if route_net is not None:
+            exit_net = route_net
         fv_roi = (exit_net - acquisition) / max(acquisition, 1e-9)
 
         segment = "|".join(x for x in (sector, family) if x) or sector
         # Liquidity is determined by the *planned resale ask*, not by how cheaply
-        # we acquire the item. The old buy_price/fair gap created false velocity.
-        planned_exit = self._f(c, "planned_exit_price", fair)
+        # we acquire the item. Route-specific gross evidence takes precedence.
+        planned_exit = self._f(c, "planned_exit_price", 0.0)
+        if planned_exit <= 0 and route_gross is not None:
+            planned_exit = route_gross
         if planned_exit <= 0:
             planned_exit = fair
         price_gap = planned_exit / max(fair, 1e-9) - 1.0
