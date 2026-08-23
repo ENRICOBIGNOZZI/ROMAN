@@ -2,6 +2,14 @@
 
 ROMAN deliberately starts with small, interpretable online models. Every decision metric is computed after explicit fees/costs and then converted into lower-confidence-bound net ROIC per capital-day.
 
+## 0. Pure executable arbitrage
+
+Pure arbitrage is handled separately from predictive reselling. For the same normalized entity, ROMAN requires an executable buy ask on one venue and an executable sell bid on another venue. It computes the fully loaded acquisition cost and locked exit proceeds after buy/sell fees, shipping, tax, authentication, FX and route-specific costs.
+
+Because physical resale is not atomic, a raw positive spread is not enough. `PureArbitrageEngine` also checks minimum executable quantity, joint fill probability, quote staleness, execution latency, route risk and a second-leg-failure penalty. Only opportunities with positive conservative net ROI are labeled `pure_locked_arbitrage`.
+
+Ordinary public listing dispersion is never treated as pure arbitrage unless the feed explicitly marks the two sides as executable.
+
 ## 1. Hierarchical fair value
 
 Executed/trusted net-equivalent log prices are modeled through
@@ -54,16 +62,15 @@ For same-entity net-equivalent comparables, ROMAN uses a weighted median and wei
 
 ## 8. Conservative ensemble
 
-The model signals are:
+The predictive model signals are:
 
 - hierarchical/fair-value net ROI;
 - factor-residual net ROI;
-- robust cross-market anomaly net ROI;
-- executable locked spread, when available.
+- robust cross-market anomaly net ROI.
 
 Without a locked spread, at least two model signals must agree. The ensemble uses a conservative lower location between the 25th percentile and median, then multiplies by seller, condition, liquidity and regime gates.
 
-An actually executable bid can bypass model-agreement, but cannot bypass quality/liquidity controls.
+A validated pure locked arbitrage is evaluated by the separate execution engine and does not need model agreement, but it still cannot bypass operational, quality, liquidity or execution-risk controls.
 
 ## Net-cost objective
 
@@ -82,6 +89,8 @@ ROMAN then computes
 and finally
 
 `score = LCB(net_ROIC) / E[holding_days]`.
+
+For pure arbitrage, the analogous score uses the conservative locked net ROI divided by capital-days.
 
 The live allocator should maximize this score under the EUR 10,000 cash/inventory constraints, not gross spread and not capital utilization.
 
