@@ -109,7 +109,11 @@ class CardTraderMarketFeed:
             if not tokens:
                 continue
             overlap = len(q_tokens & tokens) / max(len(tokens), 1)
-            containment = 1.0 if name.lower() and name.lower() in (query or "").lower() else 0.0
+            containment = (
+                1.0
+                if name.lower() and name.lower() in (query or "").lower()
+                else 0.0
+            )
             score = 0.7 * overlap + 0.3 * containment
             if score > 0:
                 ranked.append((score, eid, expansion))
@@ -130,6 +134,20 @@ class CardTraderMarketFeed:
                 out.extend(x for x in value if isinstance(x, dict))
         return out
 
+    @staticmethod
+    def _game_name(game_id, games: list[dict]) -> str:
+        try:
+            wanted = int(game_id)
+        except Exception:
+            return ""
+        for game in games:
+            try:
+                if int(game.get("id")) == wanted:
+                    return str(game.get("name") or "")
+            except Exception:
+                continue
+        return ""
+
     def fetch(self, query: str, limit: int = 50):
         if not self.available():
             return []
@@ -138,14 +156,19 @@ class CardTraderMarketFeed:
         if best is None:
             return []
         expansion_score, expansion_id, expansion = best
+        game_name = self._game_name(expansion.get("game_id"), games)
         data = self._get("/marketplace/products", expansion_id=expansion_id)
         products = self._flatten_products(data)
         q_tokens = _tokens(query)
         ranked = []
         for product in products:
             name = str(product.get("name_en") or "")
-            expansion_name = str((product.get("expansion") or {}).get("name_en") or expansion.get("name") or "")
-            p_tokens = _tokens(f"{name} {expansion_name}")
+            expansion_name = str(
+                (product.get("expansion") or {}).get("name_en")
+                or expansion.get("name")
+                or ""
+            )
+            p_tokens = _tokens(f"{game_name} {name} {expansion_name}")
             overlap = len(q_tokens & p_tokens) / max(len(q_tokens), 1)
             if overlap < 0.35:
                 continue
@@ -170,25 +193,30 @@ class CardTraderMarketFeed:
             properties = product.get("properties_hash") or {}
             condition = str(properties.get("condition") or "")
             name = str(product.get("name_en") or query)
-            expansion_name = str(expansion_obj.get("name_en") or expansion.get("name") or "")
+            expansion_name = str(
+                expansion_obj.get("name_en") or expansion.get("name") or ""
+            )
             out.append(
                 RawListing(
                     source=self.name,
                     external_id=str(product.get("id") or f"ct:{len(out)}"),
-                    title=f"{name} {expansion_name}".strip(),
+                    title=f"{game_name} {name} {expansion_name}".strip(),
                     price=cents / 100.0,
                     currency=currency,
                     url="https://www.cardtrader.com/",
                     condition=condition,
                     seller=str(user.get("username") or ""),
-                    category="TCG marketplace",
-                    product_key=(f"cardtrader:{blueprint_id}" if blueprint_id else ""),
+                    category=f"{game_name} TCG marketplace".strip(),
+                    product_key=(
+                        f"cardtrader:{blueprint_id}" if blueprint_id else ""
+                    ),
                     extra={
                         "query": query,
                         "reference_only": False,
                         "executable_confidence": 0.62,
                         "expansion_match": expansion_score,
                         "product_match": overlap,
+                        "game_name": game_name,
                         "blueprint_id": blueprint_id,
                         "quantity": product.get("quantity"),
                         "bundle_size": product.get("bundle_size"),
