@@ -138,13 +138,35 @@ def test_dynamic_factor_adjustment_is_bounded_inside_stack():
     assert abs(out.factor_net_roi - out.fair_value_net_roi) <= 0.0200001
 
 
-def test_allocator_respects_10k_cash_buffer_and_item_cap():
-    a = CapitalDayAllocator(capital=10000, cash_buffer_fraction=0.10)
+def test_allocator_respects_10k_liquidity_buffer_and_item_cap():
+    a = CapitalDayAllocator(capital=10000)
     rows = [
-        {"trade": True, "entity_key": "a", "sector": "cards", "buy_source": "ebay", "acquisition_cost": 2500, "lcb_net_roi": 0.04, "expected_holding_days": 8, "score_per_capital_day": 0.005},
-        {"trade": True, "entity_key": "b", "sector": "lego", "buy_source": "bricklink", "acquisition_cost": 2500, "lcb_net_roi": 0.03, "expected_holding_days": 10, "score_per_capital_day": 0.003},
-        {"trade": True, "entity_key": "c", "sector": "watches", "buy_source": "chrono24", "acquisition_cost": 5000, "lcb_net_roi": 0.05, "expected_holding_days": 15, "score_per_capital_day": 0.0033},
+        {"trade": True, "entity_key": "a", "sector": "cards", "buy_source": "ebay", "acquisition_cost": 2500, "lcb_net_roi": 0.04, "expected_holding_days": 8, "sale_prob_30d": 0.90, "score_per_capital_day": 0.005},
+        {"trade": True, "entity_key": "b", "sector": "lego", "buy_source": "bricklink", "acquisition_cost": 2500, "lcb_net_roi": 0.03, "expected_holding_days": 10, "sale_prob_30d": 0.85, "score_per_capital_day": 0.003},
+        {"trade": True, "entity_key": "c", "sector": "watches", "buy_source": "chrono24", "acquisition_cost": 5000, "lcb_net_roi": 0.05, "expected_holding_days": 15, "sale_prob_30d": 0.80, "score_per_capital_day": 0.0033},
     ]
     r = a.allocate(rows)
-    assert r.capital_used <= 9000.0001
-    assert all(float(x["acquisition_cost"]) <= 3000.0001 for x in r.selected)
+    assert r.capital_used <= 8000.0001
+    assert all(float(x["acquisition_cost"]) <= 2500.0001 for x in r.selected)
+    assert {x["entity_key"] for x in r.selected} == {"a", "b"}
+
+
+def test_allocator_rejects_slow_or_illiquid_inventory():
+    a = CapitalDayAllocator(capital=10000)
+    rows = [
+        {"trade": True, "entity_key": "slow", "sector": "watches", "buy_source": "x", "acquisition_cost": 1500, "lcb_net_roi": 0.10, "expected_holding_days": 60, "sale_prob_30d": 0.70, "score_per_capital_day": 0.0017},
+        {"trade": True, "entity_key": "illiquid", "sector": "cards", "buy_source": "y", "acquisition_cost": 1200, "lcb_net_roi": 0.05, "expected_holding_days": 18, "sale_prob_30d": 0.30, "score_per_capital_day": 0.0028},
+        {"trade": True, "entity_key": "fast", "sector": "lego", "buy_source": "z", "acquisition_cost": 1200, "lcb_net_roi": 0.025, "expected_holding_days": 7, "sale_prob_30d": 0.90, "score_per_capital_day": 0.0036},
+    ]
+    r = a.allocate(rows)
+    assert [x["entity_key"] for x in r.selected] == ["fast"]
+
+
+def test_allocator_caps_slow_capital_bucket():
+    a = CapitalDayAllocator(capital=10000)
+    rows = [
+        {"trade": True, "entity_key": f"s{i}", "sector": f"sec{i}", "buy_source": f"src{i}", "acquisition_cost": 1000, "lcb_net_roi": 0.05, "expected_holding_days": 25, "sale_prob_30d": 0.80, "score_per_capital_day": 0.002}
+        for i in range(5)
+    ]
+    r = a.allocate(rows)
+    assert sum(float(x["acquisition_cost"]) for x in r.selected if x["expected_holding_days"] > 21) <= 2000.0001
