@@ -11,6 +11,7 @@ def main():
         "buy_fee_rate": 0.02,
         "buy_shipping": 4.0,
         "base_fair_value": 125.0,
+        "target_exit_price": 125.0,
         "exit_fee_rate": 0.09,
         "exit_shipping": 5.0,
         "authentication_cost": 2.0,
@@ -33,16 +34,19 @@ def main():
         ],
         "model_sigma_roi": 0.01,
     }
+
+    p = m.predict(candidate)
     s = m.score(candidate)
+    assert p is not None
+
     print(f"acquisition_cost       {s.acquisition_cost:8.2f}")
+    print(f"fair_value             {s.fair_value:8.2f}")
     print(f"expected_exit_net      {s.expected_exit_net:8.2f}")
-    print(f"fair_value_net_roi     {100*s.fair_value_net_roi:8.2f}%")
-    print(f"factor_net_roi         {100*(s.factor_net_roi or 0):8.2f}%")
-    print(f"anomaly_net_roi        {100*(s.anomaly_net_roi or 0):8.2f}%")
+    print(f"expected_net_roi       {100*p.expected_net_roi:8.2f}%")
+    print(f"sigma_net_roi          {100*p.sigma_net_roi:8.2f}%")
+    print(f"lcb_net_roi            {100*s.lcb_net_roi:8.2f}%")
     print(f"sale_prob_30d          {100*s.sale_prob_30d:8.2f}%")
     print(f"expected_holding_days  {s.expected_holding_days:8.2f}")
-    print(f"conservative_net_roi   {100*s.conservative_net_roi:8.2f}%")
-    print(f"lcb_net_roi            {100*s.lcb_net_roi:8.2f}%")
     print(f"score_per_capital_day  {100*s.score_per_capital_day:8.4f}%")
     print(f"trade                  {s.trade}")
     print(f"reason                 {s.reason}")

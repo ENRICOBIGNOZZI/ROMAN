@@ -19,47 +19,36 @@ The page starts in `PRE-SHADOW` with zero P&L and no invented market data. When 
 For candidate `i`, Reselling BOT optimizes a lower-confidence-bound estimate of **net** profit per capital-day:
 
 ```text
-score_i = LCB(net_profit_i) / (capital_i * E[holding_days_i])
+score_i = LCB(net_ROI_i) / E[holding_days_i]
+LCB(net_ROI_i) = E[net_ROI_i] - z * sigma(net_ROI_i)
 ```
 
-Net profit is after configured:
-
-- buyer and seller fees
-- payment processing
-- shipping / insurance
-- authentication / grading
-- FX friction
-- repair / condition costs
-- expected returns / fraud losses
-- configured taxes
-- forced-liquidation / exit markdowns
+Net profit is after configured buyer/seller fees, payment processing, shipping, insurance, authentication/grading, FX friction, repair/condition costs, expected returns/fraud losses, configured taxes and exit markdowns.
 
 The system does **not** try to maximize capital utilization. With EUR 10k it may prefer a smaller number of high-ROIC opportunities and keep cash idle.
 
-## Simple model stack
+## One unified model
 
-The current pre-live stack is intentionally interpretable:
+ROMAN no longer treats fair value, factors, liquidity, seller quality and cross-market anomalies as independent models that vote on a purchase.
 
-1. hierarchical fair value: product -> family -> sector -> global
-2. robust PCA residual factors on returns, never raw price levels
-3. dynamic Kalman factor filter
-4. sale-hazard / expected time-to-sale model
-5. seller / route Beta posterior
-6. lightweight text + image-condition risk inputs
-7. EWMA + Page-Hinkley regime detection
-8. robust cross-market median/MAD anomaly model
-9. conservative ensemble + LCB veto
+The core predictive object is:
 
-PCA/factors are overlays only: they are bounded and cannot manufacture a large bargain by themselves.
+```text
+p(net_payoff, time_to_sale | item_information, market_state)
+```
+
+The implementation has four blocks:
+
+1. **Market state** — PCA/Kalman/regime information summarizes common conditions and makes only bounded adjustments.
+2. **Price + time-to-sale** — hierarchical partial pooling (`product -> family -> sector -> global`) estimates sparse fair values; condition, seller/route information and comparables enter as covariates/evidence; the sale hazard supplies expected holding time.
+3. **Net payoff distribution** — every configured cost is deducted before estimating expected net ROI and uncertainty.
+4. **Decision** — one LCB is converted into expected payoff per capital-day and passed to the capital allocator.
+
+The old agreement-gated ensemble remains available as a standalone legacy component for experiments, but it is no longer used by `SimpleModelStack`.
 
 ## Universe
 
-The maximal catalog currently contains hundreds of resale sub-sectors spanning cards, watches, LEGO, sneakers, cameras, luxury, music gear, electronics, games, collectibles and more. A large source registry separates:
-
-- official / credentialed APIs
-- partner feeds
-- manual / CSV snapshot sources
-- restricted / unavailable sources
+The maximal catalog currently contains hundreds of resale sub-sectors spanning cards, watches, LEGO, sneakers, cameras, luxury, music gear, electronics, games, collectibles and more. A large source registry separates official/credentialed APIs, partner feeds, manual/CSV snapshot sources and restricted/unavailable sources.
 
 No source is treated as live unless an authorized feed is actually available.
 
@@ -71,27 +60,11 @@ Point-in-time observations are stored append-only in SQLite. Entity matching is 
 
 ## EUR 10k allocation
 
-The simple allocator ranks by LCB net profit per capital-day and applies:
-
-- cash buffer
-- per-item caps
-- larger caps only for locked/executable opportunities
-- sector and source concentration limits
-- duplicate-entity vetoes
+The allocator ranks by LCB net profit per capital-day and applies cash buffer, per-item caps, sector/source concentration limits, duplicate-entity vetoes and explicit slow-inventory limits.
 
 ## 48-hour shadow experiment
 
-The first real validation will run for 48 hours with EUR 10,000 virtual capital. We will track:
-
-- NAV / cash / inventory
-- raw vs qualified signals
-- executable exit rate
-- net ROIC
-- capital utilization and capital-days
-- forecast error and calibration
-- 1h / 6h / 24h / 48h marks
-- sale/execution outcomes separately from theoretical marks
-- performance by sector, source, route and model
+The first real validation will run for 48 hours with EUR 10,000 virtual capital. We will track NAV/cash/inventory, raw vs qualified candidates, executable exit rate, net ROIC, capital utilization and capital-days, forecast error/calibration, 1h/6h/24h/48h marks, sale/execution outcomes and performance by sector/source/route.
 
 A favorable mark is **not** counted as a realized sale.
 
@@ -114,19 +87,22 @@ Docker deployment files are included in the repository.
 
 ## Repository structure
 
-- `src/roman_arb/model_stack.py` — unified simple model stack
-- `src/roman_arb/hierarchy.py` — hierarchical fair value
-- `src/roman_arb/factors.py` — robust PCA overlay
-- `src/roman_arb/kalman.py` — dynamic factor filter
+- `src/roman_arb/model_stack.py` — compatibility entrypoint
+- `src/roman_arb/unified_model.py` — unified payoff/time-to-sale predictive model
+- `src/roman_arb/hierarchy.py` — hierarchical partial pooling for fair value
+- `src/roman_arb/factors.py` — robust PCA market-state features
+- `src/roman_arb/kalman.py` — dynamic factor state
 - `src/roman_arb/liquidity.py` — sale hazard
-- `src/roman_arb/seller.py` — seller posterior
-- `src/roman_arb/condition_model.py` — condition risk
-- `src/roman_arb/regime.py` — regime detector
-- `src/roman_arb/anomaly.py` — cross-market anomaly model
+- `src/roman_arb/seller.py` — seller/route posterior
+- `src/roman_arb/condition_model.py` — condition covariates
+- `src/roman_arb/regime.py` — regime state
+- `src/roman_arb/anomaly.py` — robust comparable-price evidence
 - `src/roman_arb/allocator.py` — EUR 10k capital-day allocator
 - `src/roman_arb/feeds/` — feed adapters
 - `src/roman_arb/snapshot.py` — point-in-time snapshot store
 - `docs/` — Reselling BOT public dashboard
+
+See `MODELS.md` for the compact model specification.
 
 ## Safety / research status
 
