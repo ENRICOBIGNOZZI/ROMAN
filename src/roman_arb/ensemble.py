@@ -16,16 +16,17 @@ class EnsembleDecision:
 
 
 class ConservativeEnsemble:
-    """Agreement-gated ensemble for already-net ROI signals.
+    """Dependence-aware gate for already-net ROI evidence.
 
-    Signals should already include venue fees, shipping, FX, authentication and
-    expected operational loss. Seller, condition, liquidity and regime inputs are
-    *risk modifiers*, not literal probabilities that multiply expected profit.
+    A fresh locked/executable spread is a distinct economic object and may bypass
+    model consensus because the exit itself supplies execution/liquidity evidence.
 
-    A fresh locked/executable spread is a different economic object from an
-    inventory forecast. It can bypass model agreement and sale-hazard gating,
-    because an executable exit already supplies the liquidity evidence. Seller,
-    condition and regime safeguards still apply.
+    For inventory forecasts, ROMAN must not count several transformations of the
+    same cross-market comparables as independent model votes. The fair-value ROI is
+    the base valuation channel. The factor channel only confirms it when it adds a
+    *positive, non-trivial* temporal residual adjustment. A cross-market anomaly is
+    retained as diagnostic evidence but is not, by default, an independent vote.
+    This deliberately reduces cold-start trading rather than manufacture agreement.
     """
 
     def __init__(
@@ -33,10 +34,14 @@ class ConservativeEnsemble:
         min_signal_roi: float = 0.004,
         min_agreement: float = 2 / 3,
         min_confidence: float = 0.22,
+        min_factor_confirmation_roi: float = 0.0005,
     ):
         self.min_signal_roi = float(min_signal_roi)
         self.min_agreement = float(min_agreement)
         self.min_confidence = float(min_confidence)
+        self.min_factor_confirmation_roi = max(
+            0.0, float(min_factor_confirmation_roi)
+        )
 
     @staticmethod
     def _clip01(x: float, default: float) -> float:
@@ -48,6 +53,16 @@ class ConservativeEnsemble:
             v = default
         return max(0.0, min(1.0, v))
 
+    @staticmethod
+    def _finite_or_none(x: float | None) -> float | None:
+        if x is None:
+            return None
+        try:
+            v = float(x)
+        except Exception:
+            return None
+        return v if math.isfinite(v) else None
+
     def decide(
         self,
         fair_value_roi: float | None,
@@ -58,34 +73,28 @@ class ConservativeEnsemble:
         condition_risk: float = 0.2,
         sale_prob_30d: float = 0.5,
         regime_weight: float = 1.0,
+        anomaly_independent: bool = False,
     ) -> EnsembleDecision:
-        model_signals = [
-            float(x)
-            for x in (fair_value_roi, factor_roi, anomaly_roi)
-            if x is not None and math.isfinite(float(x))
-        ]
-        locked = (
-            float(locked_spread_roi)
-            if locked_spread_roi is not None
-            and math.isfinite(float(locked_spread_roi))
-            else None
-        )
+        fair = self._finite_or_none(fair_value_roi)
+        factor = self._finite_or_none(factor_roi)
+        anomaly = self._finite_or_none(anomaly_roi)
+        locked = self._finite_or_none(locked_spread_roi)
 
         seller = self._clip01(seller_success_prob, 0.5)
         condition = self._clip01(condition_risk, 0.2)
         liquidity = self._clip01(sale_prob_30d, 0.5)
         regime = self._clip01(regime_weight, 0.55)
 
-        # These are bounded haircuts. An uncalibrated 50% seller posterior should
-        # not mechanically cut expected ROI in half; the separate seller model
-        # contributes an additive risk penalty in the stack's LCB calculation.
+        # Bounded risk haircuts. Seller reliability also contributes an additive
+        # uncertainty penalty in the stack's LCB calculation.
         seller_gate = 0.75 + 0.25 * seller
         condition_gate = 1.0 - 0.50 * condition
         regime_gate = 0.70 + 0.30 * regime
         liquidity_gate = 0.65 + 0.35 * liquidity
 
         if locked is not None and locked > self.min_signal_roi:
-            # Sale hazard is irrelevant once a fresh executable exit exists.
+            # A fresh executable exit makes the inventory sale-hazard forecast
+            # irrelevant, but seller/condition/regime safeguards remain active.
             quality_gate = seller_gate * condition_gate * regime_gate
             conservative = locked * quality_gate
             conf = min(1.0, 0.65 + 0.35 * quality_gate)
@@ -103,15 +112,40 @@ class ConservativeEnsemble:
                 "locked_executable" if trade else "locked_but_quality_gate",
             )
 
-        if len(model_signals) < 2:
+        if fair is None:
             return EnsembleDecision(
-                False, 0.0, 0.0, 0.0, 0.0, "insufficient_model_agreement"
+                False, 0.0, 0.0, 0.0, 0.0, "missing_fair_value_signal"
             )
 
-        positives = sum(x > self.min_signal_roi for x in model_signals)
-        agreement = positives / len(model_signals)
-        arr = np.asarray(model_signals, dtype=float)
-        # Conservative location: halfway between lower quartile and median.
+        # In the current stack factor_roi = fair_roi + bounded temporal residual
+        # overlay. Its *increment* is the independent information. Merely copying
+        # a positive fair-value ROI into the factor channel is not confirmation.
+        factor_increment = None if factor is None else factor - fair
+        factor_confirms = (
+            factor_increment is not None
+            and factor_increment >= self.min_factor_confirmation_roi
+        )
+        if not factor_confirms:
+            return EnsembleDecision(
+                False,
+                fair,
+                0.0,
+                0.0,
+                0.0,
+                "insufficient_independent_confirmation",
+            )
+
+        # Use only evidence channels that can legitimately vote. A positive
+        # anomaly computed from the same comparables is diagnostic, not another
+        # vote. Callers may explicitly mark a separately-estimated anomaly model
+        # as independent in the future.
+        decision_signals = [fair, factor]
+        if anomaly_independent and anomaly is not None:
+            decision_signals.append(anomaly)
+
+        positives = sum(x > self.min_signal_roi for x in decision_signals)
+        agreement = positives / len(decision_signals)
+        arr = np.asarray(decision_signals, dtype=float)
         q25 = float(np.quantile(arr, 0.25))
         med = float(np.median(arr))
         expected = 0.5 * q25 + 0.5 * med
