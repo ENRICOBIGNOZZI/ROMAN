@@ -81,7 +81,13 @@ class SimpleModelStack:
         market_return: float | None = None,
     ) -> None:
         if sold and exit_price > 0:
-            self.hierarchy.update(exit_price, sector, family, product)
+            self.hierarchy.update(
+                exit_price,
+                sector,
+                family,
+                product,
+                trusted=True,
+            )
         segment = "|".join(x for x in (sector, family) if x) or "global"
         self.hazard.update(segment, sold=sold, exposure_days=exposure_days)
 
