@@ -1,0 +1,42 @@
+name: live-smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/live-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e .
+      - name: One real-network shadow cycle
+        env:
+          ROMAN_FDR_ALPHA: '0.25'
+        run: |
+          rm -f data/roman_snapshots.sqlite data/roman_tracking.sqlite data/roman_shadow.sqlite
+          python scripts/run_live_daemon.py --once --capital 10000 --queries-per-source 1 --limit 12 --health-port 8788 --max-hours 0.01
+      - name: Diagnostic report
+        run: |
+          python scripts/report_shadow.py --out outputs/live/smoke_report
+          echo '--- DASHBOARD ---'
+          cat outputs/live/dashboard.json
+          echo '--- DIAGNOSTIC ---'
+          cat outputs/live/smoke_report.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reselling-bot-live-smoke
+          path: |
+            outputs/live/dashboard.json
+            outputs/live/smoke_report.json
+            outputs/live/smoke_report.md
