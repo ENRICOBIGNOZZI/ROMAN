@@ -18,3 +18,10 @@ def test_default_maximal_universe_uses_markets_risk_policy_overlay():
         assert venues[key].sell_fee == float(row.get("sell_fee", 0.0))
         assert venues[key].fixed_exit == float(row.get("fixed_exit", 0.0))
         assert venues[key].price_haircut == float(row.get("price_haircut", 0.0))
+
+    # Regenerating the maximal catalogue must never drop a core policy sector
+    # that live routing/aliases rely on.
+    for row in policy["sectors"]:
+        assert row["key"] in sectors
+    assert "retro_games" in sectors
+    assert "consoles" in sectors

@@ -1,12 +1,23 @@
 from __future__ import annotations
+
 import json
 from pathlib import Path
+
+from .bricklink import BrickLinkPriceGuideFeed
+from .cardmarket_public import CardmarketPublicReferenceFeed
+from .cardtrader import CardTraderMarketFeed
+from .discogs import DiscogsReferenceFeed
 from .ebay import EbayBrowseFeed
-from .stockx import StockXMarketFeed
-from .reverb import ReverbFeed
 from .etsy import EtsyFeed
+from .keepa import KeepaReferenceFeed
 from .mercadolibre import MercadoLibreFeed
+from .pricecharting import PriceChartingFeed
 from .rakuten import RakutenIchibaFeed
+from .reverb import ReverbFeed
+from .ricardo import RicardoSearchFeed
+from .stockx import StockXMarketFeed
+from .tcgapi import TCGReferenceFeed
+from .watchcharts import WatchChartsReferenceFeed
 
 
 def default_registry_path():
@@ -18,24 +29,35 @@ def default_registry_path():
 def load_source_registry(path=None):
     p = Path(path) if path else default_registry_path()
     if p.name.endswith(".z64"):
-        import base64, zlib
-        raw = json.loads(zlib.decompress(base64.b64decode(p.read_text().strip())).decode("utf-8"))
+        import base64
+        import zlib
+
+        raw = json.loads(
+            zlib.decompress(base64.b64decode(p.read_text().strip())).decode("utf-8")
+        )
     else:
         raw = json.loads(p.read_text())
     return raw["sources"]
 
 
 def official_adapters():
+    """Authorized adapters that return concrete market/retail listings.
+
+    Reference-price APIs deliberately live in ``reference_adapters`` so a guide
+    price or marketplace statistic cannot accidentally become a buy/exit route.
+    This function also intentionally excludes scraper adapters for marketplaces
+    whose current terms prohibit automated extraction without permission.
+    """
     adapters = {
         "ebay": EbayBrowseFeed(),
         "stockx": StockXMarketFeed(),
         "reverb": ReverbFeed(),
         "etsy": EtsyFeed(),
         "rakuten_ichiba": RakutenIchibaFeed(),
+        "ricardo": RicardoSearchFeed(),
+        "pricecharting": PriceChartingFeed(include_reference_fallback=False),
+        "cardtrader": CardTraderMarketFeed(),
     }
-    # Mercado Libre site adapters are read-only but credential-gated. Without an
-    # authorized MELI_ACCESS_TOKEN they remain NO_CREDENTIALS/PRE-SHADOW rather
-    # than repeatedly treating auth failures as market-data observations.
     for site, suffix in (
         ("MLM", "mx"),
         ("MLA", "ar"),
@@ -47,3 +69,21 @@ def official_adapters():
         name = f"mercadolibre_{suffix}"
         adapters[name] = MercadoLibreFeed(site_id=site, source_name=name)
     return adapters
+
+
+def reference_adapters():
+    """Authorized/public valuation feeds, never executable routes."""
+    return {
+        # Cardmarket explicitly publishes these catalogue/price-guide downloads
+        # for all users; no account/API credential is required.
+        "cardmarket_public_reference": CardmarketPublicReferenceFeed(),
+        "bricklink_reference": BrickLinkPriceGuideFeed(),
+        "discogs_reference": DiscogsReferenceFeed(),
+        "tcgapi_reference": TCGReferenceFeed(),
+        "pricecharting_reference": PriceChartingFeed(
+            include_marketplace_offers=False,
+            include_reference_fallback=True,
+        ),
+        "watchcharts_reference": WatchChartsReferenceFeed(),
+        "keepa_reference": KeepaReferenceFeed(),
+    }

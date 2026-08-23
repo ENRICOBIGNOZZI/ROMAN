@@ -48,6 +48,20 @@ def get_json(
     return _read_json(req, timeout, retries)
 
 
+def post_json(
+    url: str,
+    data: dict,
+    headers: dict[str, str] | None = None,
+    timeout: int = 20,
+    retries: int = 2,
+):
+    payload = json.dumps(data, separators=(",", ":")).encode("utf-8")
+    h = {"Content-Type": "application/json", "Accept": "application/json"}
+    h.update(headers or {})
+    req = Request(url, data=payload, headers=h, method="POST")
+    return _read_json(req, timeout, retries)
+
+
 def post_form_json(
     url: str,
     data: dict[str, str],
