@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>ROMAN — Cross-Market Arbitrage Monitor</title>
+  <style>
+    :root{--bg:#071018;--panel:#0d1923;--panel2:#101f2c;--text:#edf5f9;--muted:#91a5b3;--line:#203443;--green:#4ee1a0;--red:#ff7187;--amber:#ffc76a;--blue:#6ec8ff;--violet:#a78bfa;--shadow:0 20px 70px rgba(0,0,0,.28)}
+    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 15% -10%,#15334a 0,transparent 34%),radial-gradient(circle at 90% 5%,#222052 0,transparent 28%),var(--bg);color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}
+    .shell{max-width:1500px;margin:0 auto;padding:24px}.top{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:22px}.brand{display:flex;gap:14px;align-items:center}.logo{width:46px;height:46px;border:1px solid #315068;border-radius:14px;display:grid;place-items:center;background:linear-gradient(145deg,#132f43,#11162a);box-shadow:var(--shadow);font-weight:900;letter-spacing:-1px}.brand h1{font-size:22px;margin:0;letter-spacing:.08em}.subtitle{color:var(--muted);margin-top:3px}.statusrow{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.pill{border:1px solid var(--line);background:rgba(13,25,35,.78);padding:7px 10px;border-radius:999px;color:var(--muted);font-size:12px}.pill strong{color:var(--text)}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:var(--amber);box-shadow:0 0 12px currentColor}.dot.live{background:var(--green)}.dot.err{background:var(--red)}
+    .grid{display:grid;gap:14px}.kpis{grid-template-columns:repeat(6,minmax(0,1fr));margin-bottom:14px}.card{background:linear-gradient(160deg,rgba(17,34,47,.94),rgba(10,22,31,.95));border:1px solid rgba(54,83,103,.55);border-radius:18px;box-shadow:var(--shadow)}.kpi{padding:16px 17px}.label{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}.value{font-size:25px;font-weight:760;margin-top:7px;letter-spacing:-.035em}.sub{font-size:12px;color:var(--muted);margin-top:2px}.good{color:var(--green)}.bad{color:var(--red)}.amber{color:var(--amber)}
+    .main{grid-template-columns:1.55fr .85fr;margin-bottom:14px}.panel{padding:18px}.panelhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}.panel h2{font-size:14px;letter-spacing:.025em;margin:0}.small{font-size:12px;color:var(--muted)}.chart{height:250px;position:relative;border-radius:12px;background:linear-gradient(180deg,rgba(92,153,190,.05),rgba(0,0,0,.02));overflow:hidden}.chart svg{width:100%;height:100%}.axis{stroke:#29404e;stroke-width:1}.line{fill:none;stroke:var(--green);stroke-width:2.2}.area{fill:url(#area)}.zero{stroke:#314c5f;stroke-dasharray:5 6}.empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);text-align:center;padding:30px}.progress{height:9px;background:#142633;border-radius:99px;overflow:hidden;margin-top:10px}.progress>div{height:100%;background:linear-gradient(90deg,var(--blue),var(--violet));width:0%}.stack{display:grid;gap:10px}.model{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;border-bottom:1px solid rgba(44,68,83,.55);padding-bottom:9px}.model:last-child{border:0}.model b{font-size:12px}.tag{font-size:10px;padding:4px 7px;border-radius:999px;background:#142a38;color:#9ccbe5;border:1px solid #22465c}
+    .lower{grid-template-columns:1.55fr .85fr}.tablewrap{overflow:auto;max-height:430px}table{width:100%;border-collapse:collapse;min-width:780px}th{position:sticky;top:0;background:#10202c;color:#8198a8;font-size:10px;letter-spacing:.08em;text-transform:uppercase;text-align:left;padding:9px;border-bottom:1px solid var(--line)}td{padding:10px 9px;border-bottom:1px solid rgba(41,64,78,.48);font-size:12px;white-space:nowrap}.score{font-variant-numeric:tabular-nums}.feeds{display:grid;grid-template-columns:1fr 1fr;gap:9px}.feed{border:1px solid var(--line);border-radius:12px;padding:10px;background:rgba(11,24,33,.6)}.feedname{display:flex;justify-content:space-between;gap:8px;font-weight:650;font-size:12px}.feedmeta{font-size:11px;color:var(--muted);margin-top:5px}.footer{display:flex;justify-content:space-between;gap:12px;color:#6f8797;font-size:11px;padding:18px 4px 4px}.btn{border:1px solid #315269;border-radius:10px;background:#102737;color:#bfe4f7;padding:7px 10px;cursor:pointer}.btn:hover{background:#153247}.notice{padding:12px 14px;border:1px solid #5f4d29;background:rgba(92,67,18,.19);border-radius:12px;color:#dfc78d;font-size:12px;margin-bottom:14px}
+    @media(max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}.main,.lower{grid-template-columns:1fr}}@media(max-width:650px){.shell{padding:14px}.top{flex-direction:column}.statusrow{justify-content:flex-start}.kpis{grid-template-columns:repeat(2,1fr)}.value{font-size:21px}.feeds{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <div class="top">
+    <div class="brand"><div class="logo">R</div><div><h1>ROMAN</h1><div class="subtitle">Cross-market arbitrage research & shadow monitor</div></div></div>
+    <div class="statusrow"><span class="pill"><span id="statusDot" class="dot"></span><strong id="status">LOADING</strong></span><span class="pill">Capital <strong id="capitalTop">€10,000</strong></span><span class="pill">Updated <strong id="updated">—</strong></span><button class="btn" id="refresh">Refresh</button></div>
+  </div>
+  <div id="notice" class="notice">Shadow/paper system only. No real orders are submitted. P&amp;L is not realized unless an executable exit is explicitly observed.</div>
+
+  <section class="grid kpis">
+    <div class="card kpi"><div class="label">Shadow NAV</div><div class="value" id="nav">€10,000</div><div class="sub" id="navSub">starting capital</div></div>
+    <div class="card kpi"><div class="label">Net P&amp;L</div><div class="value" id="pnl">€0</div><div class="sub" id="pnlPct">0.00%</div></div>
+    <div class="card kpi"><div class="label">Capital deployed</div><div class="value" id="deployed">€0</div><div class="sub" id="util">0.0% utilization</div></div>
+    <div class="card kpi"><div class="label">Open positions</div><div class="value" id="positions">0</div><div class="sub" id="locked">0 locked / executable</div></div>
+    <div class="card kpi"><div class="label">Qualified signals</div><div class="value" id="signals">0</div><div class="sub" id="signalSub">after FDR + risk gates</div></div>
+    <div class="card kpi"><div class="label">Net ROIC / trade</div><div class="value" id="roic">—</div><div class="sub">fees + shipping + FX + risk included</div></div>
+  </section>
+
+  <section class="grid main">
+    <div class="card panel">
+      <div class="panelhead"><div><h2>Shadow NAV / Capital</h2><div class="small">Point-in-time, no annualization during the 48h experiment</div></div><span class="tag" id="experimentTag">PRE-SHADOW</span></div>
+      <div class="chart"><svg id="navChart" viewBox="0 0 900 250" preserveAspectRatio="none"><defs><linearGradient id="area" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#4ee1a0" stop-opacity=".24"/><stop offset="1" stop-color="#4ee1a0" stop-opacity="0"/></linearGradient></defs></svg><div class="empty" id="chartEmpty">Waiting for shadow observations.</div></div>
+      <div class="small" style="margin-top:12px">48h shadow progress</div><div class="progress"><div id="progress"></div></div><div class="small" id="progressText" style="margin-top:5px">0.0 / 48 hours</div>
+    </div>
+    <div class="card panel">
+      <div class="panelhead"><div><h2>Model stack</h2><div class="small">Simple, interpretable, online</div></div><span class="tag">NET EDGE</span></div>
+      <div class="stack" id="models"></div>
+    </div>
+  </section>
+
+  <section class="grid lower">
+    <div class="card panel">
+      <div class="panelhead"><div><h2>Best current opportunities</h2><div class="small">Sorted by LCB net profit per capital-day</div></div><span class="tag" id="oppCount">0 candidates</span></div>
+      <div class="tablewrap"><table><thead><tr><th>Entity</th><th>Buy</th><th>Exit</th><th>Cost</th><th>Net edge</th><th>LCB ROIC</th><th>E[T]</th><th>Score/day</th><th>Confidence</th></tr></thead><tbody id="oppBody"></tbody></table><div class="empty" id="oppEmpty" style="position:relative;height:170px">No qualified live opportunities yet.</div></div>
+    </div>
+    <div class="card panel">
+      <div class="panelhead"><div><h2>Feed health</h2><div class="small">Authorized APIs / imported snapshots only</div></div><span class="tag" id="feedCount">0 active</span></div>
+      <div class="feeds" id="feeds"></div>
+    </div>
+  </section>
+
+  <div class="footer"><span>ROMAN · research software · shadow/paper only</span><span id="apiLabel">data: docs/dashboard.json</span></div>
+</div>
+<script>
+const EUR=new Intl.NumberFormat('en-IE',{style:'currency',currency:'EUR',maximumFractionDigits:0});
+const PCT=x=>`${(100*(Number(x)||0)).toFixed(2)}%`;
+const MODELS=['Hierarchical fair value','PCA residual factors','Dynamic Kalman factors','Sale hazard / liquidity','Seller-quality posterior','Text + image condition risk','Regime detector','Cross-market anomaly','Conservative ensemble'];
+function colorClass(x){return x>0?'good':x<0?'bad':''}
+function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+function renderChart(series,capital){const svg=document.getElementById('navChart'),empty=document.getElementById('chartEmpty');svg.querySelectorAll('.dyn').forEach(n=>n.remove());if(!series||series.length<2){empty.style.display='grid';return}empty.style.display='none';const vals=series.map(x=>Number(x.nav));let lo=Math.min(...vals,capital),hi=Math.max(...vals,capital);let pad=Math.max((hi-lo)*.18,capital*.003);lo-=pad;hi+=pad;const X=i=>20+i*(860/(series.length-1)),Y=v=>230-(v-lo)/(hi-lo)*205;let d=series.map((p,i)=>`${i?'L':'M'}${X(i).toFixed(1)},${Y(p.nav).toFixed(1)}`).join(' ');let area=`${d} L${X(series.length-1)},230 L${X(0)},230 Z`;svg.insertAdjacentHTML('beforeend',`<path class="dyn area" d="${area}"/><line class="dyn zero" x1="20" x2="880" y1="${Y(capital)}" y2="${Y(capital)}"/><path class="dyn line" d="${d}"/>`)}
+function render(d){const capital=Number(d.capital||10000),nav=Number(d.nav??capital),pnl=Number(d.net_pnl??nav-capital),deployed=Number(d.deployed||0);document.getElementById('status').textContent=d.status||'PRE-SHADOW';const dot=document.getElementById('statusDot');dot.className='dot '+((d.status||'').includes('LIVE')?'live':(d.status||'').includes('ERROR')?'err':'');document.getElementById('capitalTop').textContent=EUR.format(capital);document.getElementById('updated').textContent=d.updated_at?new Date(d.updated_at).toLocaleString():'—';document.getElementById('nav').textContent=EUR.format(nav);document.getElementById('navSub').textContent=`starting capital ${EUR.format(capital)}`;document.getElementById('pnl').textContent=(pnl>=0?'+':'')+EUR.format(pnl);document.getElementById('pnl').className='value '+colorClass(pnl);document.getElementById('pnlPct').textContent=PCT(pnl/capital);document.getElementById('deployed').textContent=EUR.format(deployed);document.getElementById('util').textContent=`${(100*deployed/capital).toFixed(1)}% utilization`;document.getElementById('positions').textContent=d.open_positions||0;document.getElementById('locked').textContent=`${d.locked_positions||0} locked / executable`;document.getElementById('signals').textContent=d.qualified_signals||0;document.getElementById('signalSub').textContent=`${d.raw_signals||0} raw · after FDR + risk gates`;document.getElementById('roic').textContent=d.avg_net_roic==null?'—':PCT(d.avg_net_roic);document.getElementById('roic').className='value '+colorClass(Number(d.avg_net_roic||0));document.getElementById('experimentTag').textContent=d.experiment?.label||d.status||'PRE-SHADOW';let hrs=Number(d.experiment?.elapsed_hours||0),target=Number(d.experiment?.target_hours||48);document.getElementById('progress').style.width=`${Math.min(100,100*hrs/target)}%`;document.getElementById('progressText').textContent=`${hrs.toFixed(1)} / ${target} hours`;renderChart(d.nav_series||[],capital);
+ const models=document.getElementById('models');models.innerHTML=MODELS.map((m,i)=>`<div class="model"><div><b>${m}</b><div class="small">${esc(d.model_notes?.[m]||(['Bayesian shrinkage','robust returns only','online local-level filter','P(Tsale≤h) + E[T]','Beta posterior','lightweight conservative risk','EWMA + Page-Hinkley','median/MAD comparables','agreement + LCB veto'][i]))}</div></div><span class="tag">${esc(d.model_status?.[m]||'READY')}</span></div>`).join('');
+ const ops=d.opportunities||[];document.getElementById('oppCount').textContent=`${ops.length} candidates`;document.getElementById('oppEmpty').style.display=ops.length?'none':'grid';document.getElementById('oppBody').innerHTML=ops.map(o=>`<tr><td>${esc(o.entity)}</td><td>${esc(o.buy_source)}</td><td>${esc(o.exit_source)}</td><td>${EUR.format(o.acquisition_cost||0)}</td><td class="score ${colorClass(o.net_edge_roi)}">${PCT(o.net_edge_roi)}</td><td class="score ${colorClass(o.lcb_net_roi)}">${PCT(o.lcb_net_roi)}</td><td>${Number(o.expected_days||0).toFixed(1)}d</td><td>${PCT(o.score_per_capital_day)}</td><td>${PCT(o.confidence)}</td></tr>`).join('');
+ const feeds=d.feeds||[];document.getElementById('feedCount').textContent=`${feeds.filter(f=>f.status==='active').length} active`;document.getElementById('feeds').innerHTML=(feeds.length?feeds:[{name:'eBay',status:'waiting'},{name:'StockX',status:'waiting'},{name:'Reverb',status:'waiting'},{name:'Etsy',status:'waiting'},{name:'Mercado Libre',status:'waiting'},{name:'Rakuten',status:'waiting'}]).map(f=>`<div class="feed"><div class="feedname"><span>${esc(f.name)}</span><span class="${f.status==='active'?'good':f.status==='error'?'bad':'amber'}">${esc((f.status||'waiting').toUpperCase())}</span></div><div class="feedmeta">${esc(f.rows??0)} rows · ${esc(f.last_update||'not connected')}</div></div>`).join('')}
+async function load(){const qs=new URLSearchParams(location.search);const api=qs.get('api')||localStorage.getItem('roman_api');let url=api||'dashboard.json';document.getElementById('apiLabel').textContent=`data: ${url}`;try{const r=await fetch(url+(url.includes('?')?'&':'?')+'t='+Date.now(),{cache:'no-store'});if(!r.ok)throw new Error(r.status);render(await r.json())}catch(e){render({status:'ERROR — DATA UNAVAILABLE',capital:10000,updated_at:new Date().toISOString(),model_status:Object.fromEntries(MODELS.map(m=>[m,'READY']))});document.getElementById('notice').textContent='Dashboard loaded, but the configured data endpoint is unavailable. No trading data has been invented.'}}
+document.getElementById('refresh').onclick=load;load();setInterval(load,60000);
+</script>
+</body>
+</html>
