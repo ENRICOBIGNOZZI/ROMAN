@@ -39,8 +39,9 @@ source .venv/bin/activate
 python -m pip install --upgrade pip >/dev/null
 python -m pip install -e .
 
-# Load user credentials if present. Empty .env values are harmless; public
-# read-only feeds can still provide a credential-free smoke/diagnostic stream.
+# Load authorized credentials if present. With no configured feed the process is
+# still useful as a software smoke, but it must remain PRE-SHADOW and cannot be
+# interpreted as market validation.
 set -a
 # shellcheck disable=SC1091
 source .env
@@ -58,7 +59,7 @@ LOG="outputs/live/2h.log"
 : > "$LOG"
 
 (
-  python scripts/run_live_daemon.py \
+  roman-live \
     --capital 10000 \
     --interval "$INTERVAL" \
     --queries-per-source 1 \
@@ -108,7 +109,7 @@ echo "Watch now: tail -f '$ROOT/$LOG'"
 
 if command -v tailscale >/dev/null 2>&1; then
   echo
-  echo "Tailscale detected. Attempting optional public dashboard exposure..."
+  echo "Tailscale detected. Attempting optional dashboard exposure..."
   if tailscale funnel --bg --https=443 "http://127.0.0.1:${PORT}" 2>/dev/null; then
     tailscale funnel status || true
   else

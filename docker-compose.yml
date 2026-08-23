@@ -5,7 +5,7 @@ services:
     restart: "no"
     env_file:
       - .env
-    command: ["python", "scripts/run_live_daemon.py", "--capital", "10000", "--interval", "300", "--queries-per-source", "4", "--limit", "30", "--health-port", "8787", "--max-hours", "48"]
+    command: ["roman-live", "--capital", "10000", "--interval", "300", "--queries-per-source", "4", "--limit", "30", "--health-port", "8787", "--max-hours", "48"]
     volumes:
       - ./data:/app/data
       - ./outputs:/app/outputs
