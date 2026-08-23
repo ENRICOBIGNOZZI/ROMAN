@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from .bricklink import BrickLinkPriceGuideFeed
+from .cardmarket_public import CardmarketPublicReferenceFeed
 from .discogs import DiscogsReferenceFeed
 from .ebay import EbayBrowseFeed
 from .etsy import EtsyFeed
@@ -67,8 +68,11 @@ def official_adapters():
 
 
 def reference_adapters():
-    """Authorized valuation/reference feeds, never executable routes."""
+    """Authorized/public valuation feeds, never executable routes."""
     return {
+        # Cardmarket explicitly publishes these catalogue/price-guide downloads
+        # for all users; no account/API credential is required.
+        "cardmarket_public_reference": CardmarketPublicReferenceFeed(),
         "bricklink_reference": BrickLinkPriceGuideFeed(),
         "discogs_reference": DiscogsReferenceFeed(),
         "tcgapi_reference": TCGReferenceFeed(),
