@@ -12,6 +12,7 @@ from .seller import SellerQualityModel
 from .condition_model import ConditionRiskModel
 from .regime import RegimeDetector
 from .ensemble import ConservativeEnsemble
+from .anomaly import CrossMarketAnomalyModel
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ class SimpleModelStack:
         self.sellers = SellerQualityModel()
         self.condition = ConditionRiskModel()
         self.regime = RegimeDetector()
+        self.anomaly = CrossMarketAnomalyModel()
         self.ensemble = ConservativeEnsemble(min_signal_roi=min_lcb_roi)
         self.min_lcb_roi = float(min_lcb_roi)
         self.lcb_z = float(lcb_z)
@@ -81,7 +83,11 @@ class SimpleModelStack:
             self.hierarchy.update(exit_price, sector, family, product)
         segment = "|".join(x for x in (sector, family) if x) or "global"
         self.hazard.update(segment, sold=sold, exposure_days=exposure_days)
-        self.sellers.update(seller_route_key, success=bool(sold and (realized_pnl_roi is None or realized_pnl_roi > 0)), realized_pnl_roi=realized_pnl_roi)
+        self.sellers.update(
+            seller_route_key,
+            success=bool(sold and (realized_pnl_roi is None or realized_pnl_roi > 0)),
+            realized_pnl_roi=realized_pnl_roi,
+        )
         if market_return is not None:
             self.regime.update(sector, market_return)
 
@@ -168,6 +174,12 @@ class SimpleModelStack:
             anomaly_roi = self._f(c, "anomaly_net_roi")
         elif c.get("cross_market_net_roi") is not None:
             anomaly_roi = self._f(c, "cross_market_net_roi")
+        elif isinstance(c.get("comparables_net"), list):
+            a = self.anomaly.score(acquisition, c["comparables_net"])
+            if a is not None:
+                # Shrink anomaly edge by evidence quality rather than treating every
+                # public comparable as equally executable.
+                anomaly_roi = a.net_roi * a.confidence
 
         locked_roi = None
         if c.get("locked_net_roi") is not None:
