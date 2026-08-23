@@ -1,0 +1,28 @@
+{
+  "status": "PRE-SHADOW",
+  "capital": 10000,
+  "nav": 10000,
+  "net_pnl": 0,
+  "deployed": 0,
+  "open_positions": 0,
+  "locked_positions": 0,
+  "qualified_signals": 0,
+  "raw_signals": 0,
+  "avg_net_roic": null,
+  "updated_at": "2026-08-23T09:15:00+02:00",
+  "experiment": {
+    "label": "PRE-SHADOW",
+    "elapsed_hours": 0,
+    "target_hours": 48
+  },
+  "nav_series": [],
+  "opportunities": [],
+  "feeds": [
+    {"name":"eBay","status":"waiting","rows":0,"last_update":"not connected"},
+    {"name":"StockX","status":"waiting","rows":0,"last_update":"not connected"},
+    {"name":"Reverb","status":"waiting","rows":0,"last_update":"not connected"},
+    {"name":"Etsy","status":"waiting","rows":0,"last_update":"not connected"},
+    {"name":"Mercado Libre","status":"waiting","rows":0,"last_update":"not connected"},
+    {"name":"Rakuten","status":"waiting","rows":0,"last_update":"not connected"}
+  ]
+}
