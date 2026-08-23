@@ -4,10 +4,30 @@ on:
   push:
     branches: [main]
     paths:
+      - 'src/**'
+      - 'scripts/run_live.py'
+      - 'scripts/run_live_daemon.py'
+      - 'scripts/report_shadow.py'
+      - 'config/**'
+      - 'pyproject.toml'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - '.env.example'
+      - 'LIVE_SMOKE_TRIGGER'
       - '.github/workflows/live-smoke.yml'
   pull_request:
     paths:
+      - 'src/**'
+      - 'scripts/run_live.py'
+      - 'scripts/run_live_daemon.py'
+      - 'scripts/report_shadow.py'
+      - 'config/**'
+      - 'pyproject.toml'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - '.env.example'
       - 'LIVE_SMOKE_TRIGGER'
+      - '.github/workflows/live-smoke.yml'
   workflow_dispatch:
 
 permissions:
@@ -23,15 +43,27 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -e .
-      - name: Multi-cycle real-network shadow smoke
+      - name: Credential-gated shadow pipeline smoke
         env:
           ROMAN_FDR_ALPHA: '0.25'
         run: |
           rm -f data/roman_snapshots.sqlite data/roman_tracking.sqlite data/roman_shadow.sqlite
-          python scripts/run_live_daemon.py --capital 10000 --interval 20 --queries-per-source 1 --limit 10 --health-port 8788 --max-hours 0.025
-      - name: Diagnostic report
+          roman-live --capital 10000 --interval 20 --queries-per-source 1 --limit 10 --health-port 8788 --max-hours 0.025
+      - name: Diagnostic report and fail-closed assertions
         run: |
           python scripts/report_shadow.py --out outputs/live/smoke_report
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r = json.loads(Path('outputs/live/smoke_report.json').read_text())
+          if int(r.get('snapshot_rows', 0)) == 0:
+              funnel = r.get('candidate_funnel', {})
+              cap = r.get('capital', {})
+              assert int(funnel.get('positions_opened', 0)) == 0
+              assert int(funnel.get('raw_candidate_observations', 0)) == 0
+              assert abs(float(cap.get('final_mark_pnl', 0.0))) < 1e-9
+              assert abs(float(cap.get('final_executable_pnl', 0.0))) < 1e-9
+          PY
           echo '--- DASHBOARD ---'
           cat outputs/live/dashboard.json
           echo '--- DIAGNOSTIC ---'
