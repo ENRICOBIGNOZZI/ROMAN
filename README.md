@@ -1,159 +1,133 @@
-# CODICE PER ROMAN
+# Reselling BOT
 
-Event-driven **paper-trading / research engine** for cross-market arbitrage in physical goods.
+**Cross-market resale arbitrage research and shadow-trading engine.**
 
-The project models a maximal universe of 389 resale sub-sectors (graded cards, watches, LEGO, sneakers, cameras, music gear, electronics, etc.) under one capital constraint. It ranks opportunities by a conservative lower-confidence-bound (LCB) estimate of net profit per capital-day, routes each item to the best simulated exit venue after fees, and tracks cash, inventory, turnover, realized P&L and capacity.
+Reselling BOT searches a maximal universe of physical-goods resale markets under a single capital constraint, estimates **fully net** opportunity economics, and ranks candidates by conservative expected profit per capital-day.
 
-> **Important:** the default `live` mode is a synthetic live market used for research and paper trading. It does **not** scrape marketplaces, submit orders, or claim that simulated returns are achievable. Real marketplace adapters must use authorized APIs/feeds and current terms/fees.
+> Current mode: **shadow / paper only**. No real orders are submitted. The initial validation capital is **EUR 10,000**.
 
-## Core idea
+## Public monitor
 
-For candidate listing `j`, buy venue `a`, exit venue `b`:
+The dashboard lives in `docs/` and is designed for GitHub Pages. Once Pages is enabled for this repository with **GitHub Actions** as the source, the public URL is expected to be:
+
+`https://enricobignozzi.github.io/ROMAN/`
+
+The page starts in `PRE-SHADOW` with zero P&L and no invented market data. When the server is connected, the same frontend reads the live `dashboard.json` endpoint.
+
+## Objective
+
+For candidate `i`, Reselling BOT optimizes a lower-confidence-bound estimate of **net** profit per capital-day:
 
 ```text
-net_proceeds = estimated_exit_price * (1 - sell_fee[b]) - exit_fixed_cost
-estimated_profit = net_proceeds - acquisition_cost
-LCB_profit = estimated_profit - z * model_uncertainty
-score = LCB_profit / (capital_required * expected_holding_days)
+score_i = LCB(net_profit_i) / (capital_i * E[holding_days_i])
 ```
 
-Capital scarcity is endogenous. When utilization rises, the required score rises via a shadow price of capital; the engine therefore keeps only the best inventory rather than using a fixed ROI threshold.
+Net profit is after configured:
 
-## Maximal universe: 389 sub-sectors
+- buyer and seller fees
+- payment processing
+- shipping / insurance
+- authentication / grading
+- FX friction
+- repair / condition costs
+- expected returns / fraud losses
+- configured taxes
+- forced-liquidation / exit markdowns
 
-The default configuration spans **389 sub-sectors**, grouped across watches, cards, sealed collectibles, fashion, luxury, jewelry, photo/video, electronics, audio, music gear, media, sports, outdoor, design, tools, automotive, home, books, hobby/toys and general collectibles. It also models **83 economic exit venues** and maintains a **197-source data registry**.
+The system does **not** try to maximize capital utilization. With EUR 10k it may prefer a smaller number of high-ROIC opportunities and keep cash idle.
 
-The source registry deliberately distinguishes `official_api`, `manual_csv`, `licensed_or_manual`, and `partner_or_manual`. A source being in the registry does **not** mean the project scrapes it or currently has authorization to query it.
+## Simple model stack
 
-The default maximal universe is stored compactly in `config/maximal_catalog.json.z64` in the repository (decoded transparently by the loader); `config/markets.json` is retained as a legacy 20-sector research config. Parameters are intentionally editable and should be re-estimated from point-in-time data. Two parameters are deliberately exposed because they dominate capacity: `arrival_multiplier` controls how many prefiltered candidate listings the scanner sees, and `edge_shrinkage` controls how much of an apparent discount survives winner's-curse/hidden-quality correction.
+The current pre-live stack is intentionally interpretable:
+
+1. hierarchical fair value: product -> family -> sector -> global
+2. robust PCA residual factors on returns, never raw price levels
+3. dynamic Kalman factor filter
+4. sale-hazard / expected time-to-sale model
+5. seller / route Beta posterior
+6. lightweight text + image-condition risk inputs
+7. EWMA + Page-Hinkley regime detection
+8. robust cross-market median/MAD anomaly model
+9. conservative ensemble + LCB veto
+
+PCA/factors are overlays only: they are bounded and cannot manufacture a large bargain by themselves.
+
+## Universe
+
+The maximal catalog currently contains hundreds of resale sub-sectors spanning cards, watches, LEGO, sneakers, cameras, luxury, music gear, electronics, games, collectibles and more. A large source registry separates:
+
+- official / credentialed APIs
+- partner feeds
+- manual / CSV snapshot sources
+- restricted / unavailable sources
+
+No source is treated as live unless an authorized feed is actually available.
+
+## Data and live collection
+
+Implemented feed adapters include official/credentialed paths for eBay, StockX, Reverb, Etsy, Mercado Libre and Rakuten, plus a universal CSV snapshot adapter.
+
+Point-in-time observations are stored append-only in SQLite. Entity matching is deliberately conservative around size, grade, storage, model/reference and condition. Quote freshness is part of execution logic so stale bids cannot become fake locked arbitrage.
+
+## EUR 10k allocation
+
+The simple allocator ranks by LCB net profit per capital-day and applies:
+
+- cash buffer
+- per-item caps
+- larger caps only for locked/executable opportunities
+- sector and source concentration limits
+- duplicate-entity vetoes
+
+## 48-hour shadow experiment
+
+The first real validation will run for 48 hours with EUR 10,000 virtual capital. We will track:
+
+- NAV / cash / inventory
+- raw vs qualified signals
+- executable exit rate
+- net ROIC
+- capital utilization and capital-days
+- forecast error and calibration
+- 1h / 6h / 24h / 48h marks
+- sale/execution outcomes separately from theoretical marks
+- performance by sector, source, route and model
+
+A favorable mark is **not** counted as a realized sale.
 
 ## Quick start
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
-pip install -e .
-
-# One accelerated synthetic-live year with EUR 20k
-python scripts/run_live.py --capital 20000 --days 365 --seed 7
-
-# Console demo: repeated simulated sessions
-python scripts/run_live_console.py --capital 20000 --ticks 30 --sleep 0.25
-
-# Capacity curve
-python scripts/run_capacity.py --capitals 2500 5000 10000 20000 25000 50000 100000 --years 100
-
-# Monte Carlo for EUR 20k
-python scripts/run_monte_carlo.py --capital 20000 --years 250
-
-# Arrival-rate x true-edge sensitivity
-python scripts/run_sensitivity.py --capital 20000 --years 20
+source .venv/bin/activate
+pip install -e '.[dev]'
+pytest -q
 ```
 
-Outputs are written under `outputs/` as CSV/JSON.
-
-## Simulated-live architecture
-
-```text
-Synthetic/real adapters
-        |
-        v
-normalized Listing events
-        |
-        +--> entity/sector normalization
-        +--> fee + route engine
-        +--> fair-value estimate + uncertainty
-        +--> LCB net profit
-        +--> expected time-to-sale
-        |
-        v
-score = LCB profit / (capital * days)
-        |
-        v
-capital-aware portfolio allocator
-        |
-        v
-paper execution -> inventory -> stochastic exit -> realized cash P&L
-```
-
-The interfaces intentionally separate **market ingestion** from **trading logic**, so a future authorized StockX/eBay/Chrono24/etc. adapter does not require rewriting the portfolio engine.
-
-## Real paper-live feeds
-
-The repository now includes a paper-only feed layer. Current implemented adapters are **eBay Browse API, StockX developer API, Reverb API, Etsy Open API v3, Mercado Libre and Rakuten Ichiba**, plus a universal CSV/import adapter for authorized exports and partner feeds. Credentials are read only from environment variables; no secrets belong in Git.
+Collector/shadow daemon:
 
 ```bash
-cp .env.example .env  # then export only the credentials you actually have
-python scripts/list_universe.py
-python scripts/run_feed_scan.py --query "Rolex Explorer 124270" --query "Air Jordan 1" --query "Pokemon PSA 10"
-python scripts/rank_snapshot_spreads.py
+python scripts/run_live_daemon.py --capital 10000 --interval 300
 ```
 
-Every observation is appended point-in-time to SQLite (`data/roman_snapshots.sqlite`). Missing credentials cause a source to be skipped, never replaced by fabricated data. Sources without an approved API can enter through the standardized CSV schema in `data/feed_template.csv`.
+Docker deployment files are included in the repository.
 
-### 24/7 server mode
+## Repository structure
 
-The maximal live scanner rotates through sector queries so API quotas are not exhausted in one burst:
+- `src/roman_arb/model_stack.py` — unified simple model stack
+- `src/roman_arb/hierarchy.py` — hierarchical fair value
+- `src/roman_arb/factors.py` — robust PCA overlay
+- `src/roman_arb/kalman.py` — dynamic factor filter
+- `src/roman_arb/liquidity.py` — sale hazard
+- `src/roman_arb/seller.py` — seller posterior
+- `src/roman_arb/condition_model.py` — condition risk
+- `src/roman_arb/regime.py` — regime detector
+- `src/roman_arb/anomaly.py` — cross-market anomaly model
+- `src/roman_arb/allocator.py` — EUR 10k capital-day allocator
+- `src/roman_arb/feeds/` — feed adapters
+- `src/roman_arb/snapshot.py` — point-in-time snapshot store
+- `docs/` — Reselling BOT public dashboard
 
-```bash
-python scripts/run_live_daemon.py --interval 300 --health-port 8787
-# or
-docker compose up -d --build
-```
+## Safety / research status
 
-The local health endpoints are `http://127.0.0.1:8787/health` and `/candidates`. Deployment details are in `DEPLOY_SERVER.md`. The live service is intentionally paper-only and contains no order-submission path.
-
-## Historical StockX research replay
-
-`scripts/run_stockx_replay.py` accepts the public StockX 2019 data-contest CSV. This is explicitly labelled a **research replay / pseudo-backtest**, not a synchronized cross-market executable backtest, because the public file contains realized transactions rather than contemporaneous order books across venues.
-
-```bash
-python scripts/run_stockx_replay.py path/to/StockX-Data-Contest-2019-3.csv
-```
-
-The replay is walk-forward: the reference price at a transaction can only use earlier transactions of the same sneaker/size. Buyer/seller fees are explicit parameters.
-
-## Current-fee warning
-
-Fee schedules change by country, category, seller tier and date. Values in `config/markets.json` are research defaults, **not authoritative current quotes**. Before any real trade, replace them with verified current fee schedules and shipping/payment costs for the actual account and jurisdiction.
-
-The simulator sets Swiss import tax to **0%** because that is the requested research assumption. Do not interpret that as tax advice.
-
-## Risk controls
-
-- cash-only: no leverage
-- per-item/sector concentration caps
-- stochastic fill probability
-- quality/condition uncertainty
-- model error / winner's curse via LCB
-- stochastic holding periods
-- rare operational-loss events
-- forced liquidation after maximum holding time
-- no mark-to-model P&L: returns are based on realized exits plus liquidation of residual inventory at the end of the horizon
-
-## Files
-
-- `src/roman_arb/models.py` — event/position/trade dataclasses
-- `src/roman_arb/config.py` — config loader
-- `src/roman_arb/fees.py` — venue fee routing
-- `src/roman_arb/stream.py` — synthetic live event generator
-- `src/roman_arb/strategy.py` — valuation, LCB and score
-- `src/roman_arb/portfolio.py` — capital-aware paper portfolio
-- `src/roman_arb/simulator.py` — event-driven engine
-- `src/roman_arb/stockx_replay.py` — walk-forward historical research replay
-- `src/roman_arb/metrics.py` — summary/capacity metrics
-- `scripts/` — runnable entry points
-- `tests/` — unit tests
-
-## What would make this a real live system
-
-1. Authorized listing/order-book APIs or licensed feeds.
-2. A persistent product/entity graph (SKU/reference/card grade/etc.).
-3. Historical point-in-time snapshots for model training and honest backtesting.
-4. Actual account-specific fee/shipping/FX tables.
-5. Real fill/return/fraud/condition outcomes.
-6. Monitoring + alerts; still paper-only until forward validation is satisfactory.
-
-## License
-
-MIT. Research software; no warranty and no investment, tax or legal advice.
+Research software only. No warranty. Marketplace fee schedules and access rules change; real deployment must use current account-specific costs and authorized APIs/feeds. Shadow results are not guarantees of achievable return.
