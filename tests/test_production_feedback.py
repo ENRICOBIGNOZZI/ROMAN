@@ -96,3 +96,29 @@ def test_production_dashboard_names_unified_decision_rule(tmp_path):
         assert payload["model_status"]["Unified predictive LCB"] == "ONLINE"
     finally:
         engine.close()
+
+
+def test_dashboard_separates_expected_roi_from_lcb(tmp_path):
+    engine = _engine(tmp_path)
+    try:
+        candidate = {
+            "entity_key": "id:x",
+            "title": "x",
+            "acquisition_cost": 100.0,
+            "expected_exit_net": 120.0,
+            "conservative_net_roi": 0.05,
+            "lcb_net_roi": 0.05,
+            "expected_holding_days": 10.0,
+            "score_per_capital_day": 0.005,
+            "predictive_confidence": 0.8,
+            "ensemble_confidence": 0.8,
+            "trade": True,
+        }
+        payload = engine.dashboard_payload([candidate], [])
+        opportunity = payload["opportunities"][0]
+        assert opportunity["net_edge"] == pytest.approx(0.20)
+        assert opportunity["expected_net_roi"] == pytest.approx(0.20)
+        assert opportunity["lcb_roic"] == pytest.approx(0.05)
+        assert opportunity["net_edge"] != opportunity["lcb_roic"]
+    finally:
+        engine.close()
