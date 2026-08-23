@@ -77,17 +77,23 @@ class SimpleModelStack:
         sold: bool = True,
         exposure_days: float = 1.0,
         realized_pnl_roi: float | None = None,
+        seller_success: bool | None = None,
         market_return: float | None = None,
     ) -> None:
         if sold and exit_price > 0:
             self.hierarchy.update(exit_price, sector, family, product)
         segment = "|".join(x for x in (sector, family) if x) or "global"
         self.hazard.update(segment, sold=sold, exposure_days=exposure_days)
-        self.sellers.update(
-            seller_route_key,
-            success=bool(sold and (realized_pnl_roi is None or realized_pnl_roi > 0)),
-            realized_pnl_roi=realized_pnl_roi,
-        )
+
+        # Seller reliability must be learned from a seller/route outcome
+        # (authenticity, fulfilment, return/fraud/description quality), not from
+        # whether our trading model happened to make money.
+        if seller_success is not None:
+            self.sellers.update(
+                seller_route_key,
+                success=bool(seller_success),
+                realized_pnl_roi=realized_pnl_roi,
+            )
         if market_return is not None:
             self.regime.update(sector, market_return)
 
@@ -118,15 +124,17 @@ class SimpleModelStack:
         product = str(c.get("product") or c.get("entity_key") or "")
         h = self.hierarchy.predict(sector, family, product)
         base_fair = self._f(c, "base_fair_value", 0.0)
+        hierarchy_weight = 0.0
         if base_fair <= 0 and h is None:
             return self._empty("no_fair_value", acquisition=acquisition)
         if base_fair <= 0:
             fair = h.price
+            hierarchy_weight = 1.0
         elif h is None:
             fair = base_fair
         else:
-            wh = min(0.50, 0.50 * h.confidence)
-            fair = (1.0 - wh) * base_fair + wh * h.price
+            hierarchy_weight = min(0.50, 0.50 * h.confidence)
+            fair = (1.0 - hierarchy_weight) * base_fair + hierarchy_weight * h.price
 
         cond = self.condition.score(
             str(c.get("title") or ""),
@@ -134,7 +142,7 @@ class SimpleModelStack:
             c.get("image_count"),
             c.get("image_defect_score"),
         )
-        fair *= (1.0 - cond.haircut)
+        fair *= 1.0 - cond.haircut
 
         exit_fee_rate = self._f(c, "exit_fee_rate")
         exit_costs = (
@@ -151,10 +159,19 @@ class SimpleModelStack:
         fv_roi = (exit_net - acquisition) / max(acquisition, 1e-9)
 
         segment = "|".join(x for x in (sector, family) if x) or sector
-        price_gap = buy_price / max(fair, 1e-9) - 1.0
-        hz = self.hazard.estimate(segment, price_gap=price_gap, quality_risk=cond.risk)
+        # Liquidity is determined by the *planned resale ask*, not by how cheaply
+        # we acquire the item. The old buy_price/fair gap created false velocity.
+        planned_exit = self._f(c, "planned_exit_price", fair)
+        if planned_exit <= 0:
+            planned_exit = fair
+        price_gap = planned_exit / max(fair, 1e-9) - 1.0
+        hz = self.hazard.estimate(
+            segment, price_gap=price_gap, quality_risk=cond.risk
+        )
 
-        seller_route = str(c.get("seller_route_key") or c.get("seller_id") or "unknown")
+        seller_route = str(
+            c.get("seller_route_key") or c.get("seller_id") or "unknown"
+        )
         seller = self.sellers.estimate(seller_route)
         regime = self.regime.estimate(sector)
 
@@ -166,14 +183,33 @@ class SimpleModelStack:
         elif c.get("factor_net_roi") is not None:
             factor_roi = self._f(c, "factor_net_roi")
         elif isinstance(c.get("factor_loadings"), dict) and c.get("item_return") is not None:
-            loadings = {str(k): float(v) for k, v in c["factor_loadings"].items()}
-            common, common_sigma = self.dynamic_factors.common_return(loadings)
-            item_return = self._f(c, "item_return")
-            scale = max(common_sigma, self._f(c, "factor_residual_scale", 0.02), 0.005)
-            rz = (item_return - common) / scale
-            initialized = sum(1 for k in loadings if k in self.dynamic_factors.filters and self.dynamic_factors.filters[k].state.initialized)
-            rc = (initialized / max(len(loadings), 1)) * regime.weight
-            factor_roi = fv_roi + residual_discount_overlay(0.0, rz, rc, max_adjustment=0.02)
+            loadings: dict[str, float] = {}
+            for k, v in c["factor_loadings"].items():
+                try:
+                    fv = float(v)
+                except Exception:
+                    continue
+                if math.isfinite(fv):
+                    loadings[str(k)] = fv
+            if loadings:
+                common, common_sigma = self.dynamic_factors.common_return(loadings)
+                item_return = self._f(c, "item_return")
+                scale = max(
+                    common_sigma,
+                    self._f(c, "factor_residual_scale", 0.02),
+                    0.005,
+                )
+                rz = (item_return - common) / scale
+                initialized = sum(
+                    1
+                    for k in loadings
+                    if k in self.dynamic_factors.filters
+                    and self.dynamic_factors.filters[k].state.initialized
+                )
+                rc = (initialized / max(len(loadings), 1)) * regime.weight
+                factor_roi = fv_roi + residual_discount_overlay(
+                    0.0, rz, rc, max_adjustment=0.02
+                )
 
         anomaly_roi = None
         if c.get("anomaly_net_roi") is not None:
@@ -193,6 +229,10 @@ class SimpleModelStack:
             locked_net = bid * (1.0 - exit_fee_rate) - exit_costs
             locked_roi = (locked_net - acquisition) / max(acquisition, 1e-9)
 
+        locked_active = bool(c.get("locked")) or self._f(c, "locked_exit_bid", 0.0) > 0
+        if c.get("locked_net_roi") is not None and locked_roi is not None and locked_roi > 0:
+            locked_active = True
+
         dec = self.ensemble.decide(
             fair_value_roi=fv_roi,
             factor_roi=factor_roi,
@@ -204,14 +244,40 @@ class SimpleModelStack:
             regime_weight=regime.weight,
         )
 
-        base_sigma = self._f(c, "model_sigma_roi", 0.02)
-        h_sigma = h.log_sigma if h is not None else 0.0
-        sigma_roi = math.sqrt(base_sigma * base_sigma + min(h_sigma, 0.15) ** 2 + (0.03 * cond.risk) ** 2)
-        lcb_roi = dec.conservative_net_roi - self.lcb_z * sigma_roi
-        expected_days = min(max(hz.expected_days, 1.0), 365.0)
+        base_sigma = max(0.0, min(0.50, abs(self._f(c, "model_sigma_roi", 0.02))))
+        hierarchy_sigma = 0.0
+        if h is not None:
+            # Only the share of fair value contributed by the hierarchical model
+            # should contribute its uncertainty. Previously even a tiny hierarchy
+            # weight could inject the full 15% sigma and kill an otherwise strong trade.
+            hierarchy_sigma = hierarchy_weight * min(abs(h.log_sigma), 0.20)
+        sigma_roi = math.sqrt(
+            base_sigma * base_sigma
+            + hierarchy_sigma * hierarchy_sigma
+            + (0.03 * cond.risk) ** 2
+        )
+
+        # Seller posterior is an additive operational-risk deduction. It is not a
+        # literal probability multiplier on expected profit.
+        seller_penalty = min(max(seller.risk_penalty_roi, 0.0), 0.03)
+        lcb_roi = dec.conservative_net_roi - seller_penalty - self.lcb_z * sigma_roi
+
+        if locked_active:
+            expected_days = self._f(
+                c,
+                "locked_holding_days",
+                self._f(c, "execution_days", 5.0),
+            )
+            expected_days = min(max(expected_days, 1.0), 30.0)
+        else:
+            expected_days = min(max(hz.expected_days, 1.0), 365.0)
+
         score = lcb_roi / expected_days
         trade = bool(dec.trade and lcb_roi > self.min_lcb_roi)
-        reason = dec.reason if trade else f"{dec.reason}|lcb_gate"
+        if dec.trade and not trade:
+            reason = f"{dec.reason}|lcb_gate"
+        else:
+            reason = dec.reason
 
         return StackScore(
             trade=trade,
@@ -236,4 +302,23 @@ class SimpleModelStack:
 
     @staticmethod
     def _empty(reason: str, acquisition: float = 0.0) -> StackScore:
-        return StackScore(False, 0.0, acquisition, 0.0, 0.0, None, None, None, 365.0, 0.0, 0.5, 1.0, 0.2, 0.0, 0.0, -1.0, -1.0, reason)
+        return StackScore(
+            False,
+            0.0,
+            acquisition,
+            0.0,
+            0.0,
+            None,
+            None,
+            None,
+            365.0,
+            0.0,
+            0.5,
+            1.0,
+            0.2,
+            0.0,
+            0.0,
+            -1.0,
+            -1.0,
+            reason,
+        )
