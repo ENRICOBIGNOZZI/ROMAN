@@ -20,12 +20,12 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -e .
-      - name: One real-network shadow cycle
+      - name: Multi-cycle real-network shadow smoke
         env:
           ROMAN_FDR_ALPHA: '0.25'
         run: |
           rm -f data/roman_snapshots.sqlite data/roman_tracking.sqlite data/roman_shadow.sqlite
-          python scripts/run_live_daemon.py --once --capital 10000 --queries-per-source 1 --limit 12 --health-port 8788 --max-hours 0.01
+          python scripts/run_live_daemon.py --capital 10000 --interval 20 --queries-per-source 1 --limit 10 --health-port 8788 --max-hours 0.025
       - name: Diagnostic report
         run: |
           python scripts/report_shadow.py --out outputs/live/smoke_report
