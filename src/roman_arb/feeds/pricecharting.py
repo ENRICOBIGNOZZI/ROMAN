@@ -12,18 +12,25 @@ from .http_utils import get_json
 class PriceChartingFeed:
     """Licensed PriceCharting videogame marketplace/price-guide adapter.
 
-    The API documents a one-request-per-second limit.  Marketplace offers are
-    preferred because they represent actual available listings.  If no offer is
-    returned for the best product match, the price guide is emitted only as a
-    ``reference_only`` observation and can never be selected as an executable
-    route or acquisition listing by the live engine.
+    The API documents a one-request-per-second limit. Marketplace offers and
+    price-guide references are independently switchable so the live execution
+    pipeline never has to mix executable listings with valuation-only data.
     """
 
     name = "pricecharting"
 
-    def __init__(self, token: str | None = None, max_products: int = 2):
+    def __init__(
+        self,
+        token: str | None = None,
+        max_products: int = 2,
+        *,
+        include_marketplace_offers: bool = True,
+        include_reference_fallback: bool = False,
+    ):
         self.token = token or os.getenv("PRICECHARTING_TOKEN", "")
         self.max_products = max(1, min(int(max_products), 5))
+        self.include_marketplace_offers = bool(include_marketplace_offers)
+        self.include_reference_fallback = bool(include_reference_fallback)
         self._lock = threading.Lock()
         self._last_call = 0.0
 
@@ -62,7 +69,7 @@ class PriceChartingFeed:
                 continue
             out.append(
                 RawListing(
-                    source="pricecharting",
+                    source="pricecharting_reference",
                     external_id=f"guide:{pid}:{field}",
                     title=f"{title} {console}".strip(),
                     price=pennies / 100.0,
@@ -93,55 +100,63 @@ class PriceChartingFeed:
             pid = str(product.get("id") or "")
             if not pid:
                 continue
-            offers_data = self._call(
-                "/api/offers", status="available", id=pid, sort="lowest-price"
-            )
-            offers = list((offers_data or {}).get("offers") or [])
-            for offer in offers:
-                try:
-                    pennies = int(offer.get("price") or 0)
-                except Exception:
-                    pennies = 0
-                if pennies <= 0:
-                    continue
-                offer_id = str(offer.get("offer-id") or "")
-                rel = str(offer.get("offer-url") or "")
-                title = str(offer.get("product-name") or product.get("product-name") or query)
-                console = str(offer.get("console-name") or product.get("console-name") or "")
-                condition = " | ".join(
-                    x
-                    for x in (
-                        str(offer.get("include-string") or ""),
-                        str(offer.get("condition-string") or ""),
-                    )
-                    if x
+            offers = []
+            if self.include_marketplace_offers:
+                offers_data = self._call(
+                    "/api/offers", status="available", id=pid, sort="lowest-price"
                 )
-                out.append(
-                    RawListing(
-                        source=self.name,
-                        external_id=offer_id or f"offer:{pid}:{len(out)}",
-                        title=f"{title} {console}".strip(),
-                        price=pennies / 100.0,
-                        currency="USD",
-                        url=("https://www.pricecharting.com" + rel) if rel.startswith("/") else rel,
-                        condition=condition,
-                        seller=str(offer.get("seller-id") or ""),
-                        category=f"Video Games / {console}".strip(" /"),
-                        product_key=f"pc:{pid}",
-                        extra={
-                            "query": query,
-                            "product_id": pid,
-                            "reference_only": False,
-                            "executable_confidence": 0.55,
-                            "source_market": "pricecharting",
-                            "offer": offer,
-                        },
+                offers = list((offers_data or {}).get("offers") or [])
+                for offer in offers:
+                    try:
+                        pennies = int(offer.get("price") or 0)
+                    except Exception:
+                        pennies = 0
+                    if pennies <= 0:
+                        continue
+                    offer_id = str(offer.get("offer-id") or "")
+                    rel = str(offer.get("offer-url") or "")
+                    title = str(
+                        offer.get("product-name") or product.get("product-name") or query
                     )
-                )
-                if len(out) >= limit:
-                    return out
+                    console = str(
+                        offer.get("console-name") or product.get("console-name") or ""
+                    )
+                    condition = " | ".join(
+                        x
+                        for x in (
+                            str(offer.get("include-string") or ""),
+                            str(offer.get("condition-string") or ""),
+                        )
+                        if x
+                    )
+                    out.append(
+                        RawListing(
+                            source=self.name,
+                            external_id=offer_id or f"offer:{pid}:{len(out)}",
+                            title=f"{title} {console}".strip(),
+                            price=pennies / 100.0,
+                            currency="USD",
+                            url=("https://www.pricecharting.com" + rel)
+                            if rel.startswith("/")
+                            else rel,
+                            condition=condition,
+                            seller=str(offer.get("seller-id") or ""),
+                            category=f"Video Games / {console}".strip(" /"),
+                            product_key=f"pc:{pid}",
+                            extra={
+                                "query": query,
+                                "product_id": pid,
+                                "reference_only": False,
+                                "executable_confidence": 0.55,
+                                "source_market": "pricecharting",
+                                "offer": offer,
+                            },
+                        )
+                    )
+                    if len(out) >= limit:
+                        return out
 
-            if not offers and len(out) < limit:
+            if self.include_reference_fallback and (not offers or not self.include_marketplace_offers):
                 detail = self._call("/api/product", id=pid)
                 for row in self._reference_rows(product, detail or {}, query):
                     out.append(row)
