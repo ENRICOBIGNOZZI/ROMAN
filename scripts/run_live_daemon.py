@@ -13,71 +13,203 @@ from roman_arb.live import ShadowLiveEngine
 
 
 class State:
-    payload={"brand":"Reselling BOT","status":"STARTING","capital":10000,"nav":10000}
-    error=""
-    lock=threading.Lock()
+    payload = {"brand": "Reselling BOT", "status": "STARTING", "capital": 10000, "nav": 10000}
+    error = ""
+    lock = threading.Lock()
 
 
 def normalize_payload(p: dict) -> dict:
-    q=dict(p); ops=[]
-    for x in q.get("opportunities",[]) or []:
-        ops.append({"entity":x.get("entity"),"buy_source":x.get("buy_source"),"exit_source":x.get("exit_source"),"acquisition_cost":x.get("acquisition_cost",x.get("cost",0)),"net_edge_roi":x.get("net_edge_roi",x.get("net_edge",0)),"lcb_net_roi":x.get("lcb_net_roi",x.get("lcb_roic",0)),"expected_days":x.get("expected_days",0),"score_per_capital_day":x.get("score_per_capital_day",x.get("score_day",0)),"confidence":x.get("confidence",0),"qualified":x.get("qualified",False),"url":x.get("url","")})
-    q["opportunities"]=ops; feeds=[]
-    for x in q.get("feeds",[]) or []:
-        raw=str(x.get("status","waiting")).upper(); status="active" if raw in ("OK","ACTIVE") else "error" if raw in ("ERROR","FAILED") else "waiting" if raw in ("NO_CREDENTIALS","WAITING") else "partial"
-        feeds.append({"name":x.get("name",x.get("source","unknown")),"status":status,"rows":x.get("rows",0),"last_update":x.get("last_update",x.get("last",""))})
-    q["feeds"]=feeds; return q
+    q = dict(p)
+    ops = []
+    for x in q.get("opportunities", []) or []:
+        ops.append(
+            {
+                "entity": x.get("entity"),
+                "buy_source": x.get("buy_source"),
+                "exit_source": x.get("exit_source"),
+                "acquisition_cost": x.get("acquisition_cost", x.get("cost", 0)),
+                "net_edge_roi": x.get("net_edge_roi", x.get("net_edge", 0)),
+                "lcb_net_roi": x.get("lcb_net_roi", x.get("lcb_roic", 0)),
+                "expected_days": x.get("expected_days", 0),
+                "score_per_capital_day": x.get("score_per_capital_day", x.get("score_day", 0)),
+                "confidence": x.get("confidence", 0),
+                "qualified": x.get("qualified", False),
+                "url": x.get("url", ""),
+                "cross_border": x.get("cross_border", False),
+                "reason": x.get("reason", ""),
+            }
+        )
+    q["opportunities"] = ops
+    feeds = []
+    for x in q.get("feeds", []) or []:
+        raw = str(x.get("status", "waiting")).upper()
+        status = (
+            "active"
+            if raw in ("OK", "ACTIVE")
+            else "error"
+            if raw in ("ERROR", "FAILED")
+            else "waiting"
+            if raw in ("NO_CREDENTIALS", "WAITING")
+            else "partial"
+        )
+        feeds.append(
+            {
+                "name": x.get("name", x.get("source", "unknown")),
+                "status": status,
+                "rows": x.get("rows", 0),
+                "last_update": x.get("last_update", x.get("last", "")),
+            }
+        )
+    q["feeds"] = feeds
+    return q
 
 
 def handler_factory(state):
-    html_path=Path("docs/index.html")
+    html_path = Path("docs/index.html")
+
     class Handler(BaseHTTPRequestHandler):
-        def _send(self,code,body,ctype="application/json; charset=utf-8"):
-            self.send_response(code); self.send_header("Content-Type",ctype); self.send_header("Access-Control-Allow-Origin","*"); self.send_header("Cache-Control","no-store,max-age=0"); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+        def _send(self, code, body, ctype="application/json; charset=utf-8"):
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "no-store,max-age=0")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_OPTIONS(self):
-            self.send_response(204); self.send_header("Access-Control-Allow-Origin","*"); self.send_header("Access-Control-Allow-Methods","GET,OPTIONS"); self.end_headers()
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET,OPTIONS")
+            self.end_headers()
+
         def do_GET(self):
-            path=self.path.split("?",1)[0]
-            if path=="/health":
-                with state.lock: p={"ok":not bool(state.error),"status":state.payload.get("status"),"error":state.error}
-                return self._send(200,json.dumps(p).encode())
-            if path in ("/dashboard.json","/api/dashboard"):
-                with state.lock: p=normalize_payload(state.payload)
-                return self._send(200,json.dumps(p,ensure_ascii=False).encode())
+            path = self.path.split("?", 1)[0]
+            if path == "/health":
+                with state.lock:
+                    p = {
+                        "ok": not bool(state.error),
+                        "status": state.payload.get("status"),
+                        "error": state.error,
+                    }
+                return self._send(200, json.dumps(p).encode())
+            if path in ("/dashboard.json", "/api/dashboard"):
+                with state.lock:
+                    p = normalize_payload(state.payload)
+                return self._send(200, json.dumps(p, ensure_ascii=False).encode())
             if path in ("/", "/index.html"):
-                if html_path.exists(): return self._send(200,html_path.read_bytes(),"text/html; charset=utf-8")
-                return self._send(404,b"dashboard html missing","text/plain; charset=utf-8")
-            self._send(404,b'{"error":"not found"}')
-        def log_message(self,*_): return
+                if html_path.exists():
+                    return self._send(200, html_path.read_bytes(), "text/html; charset=utf-8")
+                return self._send(404, b"dashboard html missing", "text/plain; charset=utf-8")
+            self._send(404, b'{"error":"not found"}')
+
+        def log_message(self, *_):
+            return
+
     return Handler
 
 
 def main():
-    p=argparse.ArgumentParser(description="Reselling BOT paper/shadow live daemon")
-    p.add_argument("--capital",type=float,default=10000); p.add_argument("--interval",type=int,default=300); p.add_argument("--queries-per-source",type=int,default=2); p.add_argument("--limit",type=int,default=40); p.add_argument("--health-port",type=int,default=8787)
-    p.add_argument("--max-hours",type=float,default=48.0,help="0=until stopped"); p.add_argument("--once",action="store_true"); p.add_argument("--snapshot-db",default="data/roman_snapshots.sqlite"); p.add_argument("--tracking-db",default="data/roman_tracking.sqlite"); p.add_argument("--dashboard",default="outputs/live/dashboard.json")
-    args=p.parse_args(); engine=ShadowLiveEngine(capital=args.capital,snapshot_db=args.snapshot_db,tracking_db=args.tracking_db,dashboard_path=args.dashboard,queries_per_source=args.queries_per_source,rows_per_query=args.limit)
-    fdr=PosteriorFDRSelector(float(os.getenv("ROMAN_FDR_ALPHA","0.25"))); state=State(); state.payload.update(capital=args.capital,nav=args.capital)
-    server=ThreadingHTTPServer(("0.0.0.0",args.health_port),handler_factory(state)); threading.Thread(target=server.serve_forever,daemon=True).start(); deadline=time.time()+args.max_hours*3600 if args.max_hours>0 else None
-    print(f"Reselling BOT shadow-live | capital=EUR {args.capital:.2f} | dashboard http://0.0.0.0:{args.health_port}/",flush=True)
+    p = argparse.ArgumentParser(description="Reselling BOT paper/shadow live daemon")
+    p.add_argument("--capital", type=float, default=10000)
+    p.add_argument("--interval", type=int, default=300)
+    p.add_argument("--queries-per-source", type=int, default=2)
+    p.add_argument("--limit", type=int, default=40)
+    p.add_argument("--health-port", type=int, default=8787)
+    p.add_argument("--max-hours", type=float, default=48.0, help="0=until stopped")
+    p.add_argument("--once", action="store_true")
+    p.add_argument("--snapshot-db", default="data/roman_snapshots.sqlite")
+    p.add_argument("--tracking-db", default="data/roman_tracking.sqlite")
+    p.add_argument("--shadow-db", default="data/roman_shadow.sqlite")
+    p.add_argument("--dashboard", default="outputs/live/dashboard.json")
+    args = p.parse_args()
+
+    engine = ShadowLiveEngine(
+        capital=args.capital,
+        snapshot_db=args.snapshot_db,
+        tracking_db=args.tracking_db,
+        shadow_db=args.shadow_db,
+        dashboard_path=args.dashboard,
+        queries_per_source=args.queries_per_source,
+        rows_per_query=args.limit,
+    )
+    fdr = PosteriorFDRSelector(float(os.getenv("ROMAN_FDR_ALPHA", "0.25")))
+    state = State()
+    state.payload.update(capital=args.capital, nav=args.capital)
+    server = ThreadingHTTPServer(("0.0.0.0", args.health_port), handler_factory(state))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    deadline = time.time() + args.max_hours * 3600 if args.max_hours > 0 else None
+    print(
+        f"Reselling BOT shadow-live | capital=EUR {args.capital:.2f} | dashboard http://0.0.0.0:{args.health_port}/",
+        flush=True,
+    )
+
     try:
         while True:
-            t0=time.time()
+            t0 = time.time()
             try:
-                counts=engine.collect_cycle(); candidates=engine.build_candidates(); fdr_result=fdr.annotate(candidates)
+                counts = engine.collect_cycle()
+                candidates = engine.build_candidates()
+                fdr_result = fdr.annotate(candidates)
                 for c in candidates:
-                    c["pre_fdr_trade"]=bool(c.get("trade")); c["trade"]=bool(c.get("fdr_selected"))
-                basket=engine.allocate(candidates); payload=engine.dashboard_payload(candidates,basket); payload["cycle_rows"]=counts; payload["posterior_fdr"]={"alpha":fdr_result.alpha,"mean_false_probability":fdr_result.mean_false_probability,"selected":len(fdr_result.selected)}; payload["experiment"]["target_hours"]=args.max_hours if args.max_hours>0 else 48.0
-                Path(args.dashboard).parent.mkdir(parents=True,exist_ok=True); Path(args.dashboard).write_text(json.dumps(normalize_payload(payload),indent=2,ensure_ascii=False))
-                with state.lock: state.payload=payload; state.error=""
-                print(json.dumps({"status":payload.get("status"),"rows":counts,"raw":len(candidates),"fdr_selected":len(fdr_result.selected),"deployed":payload.get("deployed")}),flush=True)
+                    c["pre_fdr_trade"] = bool(c.get("trade"))
+                    c["trade"] = bool(c.get("fdr_selected"))
+                basket = engine.allocate(candidates)
+                engine.record_cycle(counts, candidates, len(fdr_result.selected))
+                payload = engine.dashboard_payload(candidates, basket)
+                payload["cycle_rows"] = counts
+                payload["posterior_fdr"] = {
+                    "alpha": fdr_result.alpha,
+                    "mean_false_probability": fdr_result.mean_false_probability,
+                    "selected": len(fdr_result.selected),
+                }
+                payload["experiment"]["target_hours"] = args.max_hours if args.max_hours > 0 else 48.0
+                payload["experiment"]["label"] = (
+                    f"{args.max_hours:g}H DIAGNOSTIC SHADOW" if args.max_hours > 0 else "OPEN SHADOW"
+                )
+                Path(args.dashboard).parent.mkdir(parents=True, exist_ok=True)
+                Path(args.dashboard).write_text(
+                    json.dumps(normalize_payload(payload), indent=2, ensure_ascii=False)
+                )
+                with state.lock:
+                    state.payload = payload
+                    state.error = ""
+                print(
+                    json.dumps(
+                        {
+                            "status": payload.get("status"),
+                            "rows": counts,
+                            "raw": len(candidates),
+                            "pre_fdr": sum(1 for c in candidates if c.get("pre_fdr_trade")),
+                            "fdr_selected": len(fdr_result.selected),
+                            "open_positions": payload.get("open_positions"),
+                            "deployed": payload.get("deployed"),
+                            "mark_pnl": payload.get("mark_pnl"),
+                            "pca": payload.get("model_status", {}).get("PCA residual factors"),
+                        },
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
             except Exception as e:
-                with state.lock: state.error=str(e)[:500]; state.payload=dict(state.payload,status="ERROR",error=state.error)
-                print(f"cycle error: {e}",flush=True)
-            if args.once or (deadline is not None and time.time()>=deadline): break
-            time.sleep(max(1,args.interval-int(time.time()-t0)))
-    finally:
-        with state.lock: state.payload=dict(state.payload,status="SHADOW-COMPLETE")
-        Path(args.dashboard).parent.mkdir(parents=True,exist_ok=True); Path(args.dashboard).write_text(json.dumps(normalize_payload(state.payload),indent=2,ensure_ascii=False)); server.shutdown()
+                with state.lock:
+                    state.error = str(e)[:500]
+                    state.payload = dict(state.payload, status="ERROR", error=state.error)
+                print(f"cycle error: {e}", flush=True)
 
-if __name__=="__main__": main()
+            if args.once or (deadline is not None and time.time() >= deadline):
+                break
+            time.sleep(max(1, args.interval - int(time.time() - t0)))
+    finally:
+        with state.lock:
+            state.payload = dict(state.payload, status="SHADOW-COMPLETE")
+        Path(args.dashboard).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.dashboard).write_text(
+            json.dumps(normalize_payload(state.payload), indent=2, ensure_ascii=False)
+        )
+        engine.close()
+        server.shutdown()
+
+
+if __name__ == "__main__":
+    main()
