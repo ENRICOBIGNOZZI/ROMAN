@@ -53,6 +53,11 @@ MARKET_ACCESS_POLICIES: dict[str, MarketAccessPolicy] = {
         "video_game_market+reference_prices", ("PRICECHARTING_TOKEN",),
         "Paid API; marketplace offers and videogame guide prices are available.",
     ),
+    "cardtrader": MarketAccessPolicy(
+        "cardtrader", "cardtrader.com", "official_api", True,
+        "tcg_marketplace_listings", ("CARDTRADER_TOKEN",),
+        "Official Bearer-token API exposes marketplace products and purchase/cart endpoints; ROMAN is read-only.",
+    ),
 
     # Authorized/public valuation sources. They never become execution routes.
     "cardmarket_public": MarketAccessPolicy(
@@ -79,6 +84,16 @@ MARKET_ACCESS_POLICIES: dict[str, MarketAccessPolicy] = {
         ("TCGAPI_KEY",),
         "Commercial deployment requires a commercial-use tier/license.",
     ),
+    "watchcharts": MarketAccessPolicy(
+        "watchcharts", "watchcharts.com", "official_api", True, "watch_reference_prices",
+        ("WATCHCHARTS_API_KEY",),
+        "Official API maps brand+reference to market/dealer/median asking prices; internal-use licensing applies by default.",
+    ),
+    "keepa": MarketAccessPolicy(
+        "keepa", "keepa.com", "official_api", True, "amazon_reference_prices",
+        ("KEEPA_API_KEY",),
+        "Official paid API provides Amazon product search, current prices, offers and histories; ROMAN initially uses reference prices only.",
+    ),
     "tcgplayer": MarketAccessPolicy(
         "tcgplayer", "tcgplayer.com", "official_api_existing_keys", False,
         "tcg_reference_prices", ("TCGPLAYER_PUBLIC_KEY", "TCGPLAYER_PRIVATE_KEY"),
@@ -88,6 +103,10 @@ MARKET_ACCESS_POLICIES: dict[str, MarketAccessPolicy] = {
         "cardmarket_api", "cardmarket.com", "official_api_existing_keys", False,
         "tcg_market_data", (),
         "New API applications are currently closed. Public price-guide downloads are used instead.",
+    ),
+    "tcgdex": MarketAccessPolicy(
+        "tcgdex", "tcgdex.net", "public_api", False, "pokemon_reference_prices", (),
+        "Public no-auth API is tracked but not auto-applied to graded/sealed sectors because raw-card condition semantics differ.",
     ),
 
     # Seller/inventory APIs that do not provide general market discovery.
@@ -134,7 +153,7 @@ MARKET_ACCESS_POLICIES: dict[str, MarketAccessPolicy] = {
     ),
     "chrono24": MarketAccessPolicy(
         "chrono24", "chrono24.com", "partner_required", False, "watch_market_listings", (),
-        "Professional dealer/partner program exists; no general public discovery API is wired.",
+        "Professional dealer/partner program exists; no general public discovery API is wired. WatchCharts supplies authorized market-value references instead.",
     ),
     "goat": MarketAccessPolicy(
         "goat", "goat.com", "permission_required", False, "sneaker_market_listings", (),
