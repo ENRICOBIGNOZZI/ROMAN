@@ -37,36 +37,47 @@ def _expand_catalog(raw: dict) -> list[dict]:
     for row in raw["sectors"]:
         key, name, avg_ticket, family, source_venues, buy_venues, template_id = row
         d = dict(templates[int(template_id)])
-        d.update({
-            "key": key,
-            "name": name,
-            "avg_ticket": avg_ticket,
-            "family": family,
-            "source_venues": source_venues,
-            "buy_venues": buy_venues,
-        })
+        d.update(
+            {
+                "key": key,
+                "name": name,
+                "avg_ticket": avg_ticket,
+                "family": family,
+                "source_venues": source_venues,
+                "buy_venues": buy_venues,
+            }
+        )
         out.append(d)
     return out
 
 
 def load_config(path: str | Path | None = None):
     p = Path(path) if path else default_config_path()
-    # Backward compatibility with the earlier expanded-catalog filename used by
+    # Backward compatibility with earlier expanded-catalog filenames used by
     # scripts/tests. The maximal packed catalog is now the canonical superset.
-    if path is not None and not p.exists() and p.name in {"markets_expanded.json", "markets_maximal.json"}:
+    if (
+        path is not None
+        and not p.exists()
+        and p.name in {"markets_expanded.json", "markets_maximal.json"}
+    ):
         p = default_config_path()
 
     raw = _read_json_or_z64(p)
 
-    # Universe/catalog and capital policy are different concerns. The packed
-    # maximal catalog may be regenerated to add hundreds of markets, but that
-    # must never silently resurrect stale leverage/liquidity assumptions. For the
-    # default load, markets.json is the authoritative risk-policy overlay.
+    # Catalog breadth and live risk policy are different concerns. The packed
+    # catalog can be regenerated to add markets, but it must not resurrect stale
+    # capital assumptions OR stale fee schedules. For the default load,
+    # markets.json is authoritative for every policy venue it names while extra
+    # catalog-only venues are preserved.
     if path is None and p != policy_config_path() and policy_config_path().exists():
         policy = _read_json_or_z64(policy_config_path())
         raw["assumptions"] = {
             **dict(raw.get("assumptions", {})),
             **dict(policy.get("assumptions", {})),
+        }
+        raw["venues"] = {
+            **dict(raw.get("venues", {})),
+            **dict(policy.get("venues", {})),
         }
 
     venues = {k: Venue(key=k, **v) for k, v in raw["venues"].items()}
