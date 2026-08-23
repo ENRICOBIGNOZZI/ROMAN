@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 
 @dataclass(frozen=True)
@@ -18,12 +19,16 @@ class CapitalDayAllocator:
     Objective: high *net LCB profit per capital-day*, not maximum utilization.
     Slow inventory receives explicit bucket constraints so EUR 10k cannot become
     trapped in attractive-looking but hard-to-exit objects.
+
+    A safety floor is imposed on the cash buffer. This prevents a stale config or
+    a caller override from silently deploying more capital than the live policy.
     """
 
     def __init__(
         self,
         capital: float = 10_000.0,
         cash_buffer_fraction: float = 0.20,
+        minimum_cash_buffer_fraction: float = 0.20,
         max_inventory_item_fraction: float = 0.25,
         max_locked_item_fraction: float = 0.40,
         max_sector_fraction: float = 0.40,
@@ -39,7 +44,9 @@ class CapitalDayAllocator:
         max_positions: int = 24,
     ):
         self.capital = float(capital)
-        self.cash_buffer_fraction = float(cash_buffer_fraction)
+        requested_buffer = max(0.0, min(0.95, float(cash_buffer_fraction)))
+        safety_floor = max(0.0, min(0.95, float(minimum_cash_buffer_fraction)))
+        self.cash_buffer_fraction = max(requested_buffer, safety_floor)
         self.max_inventory_item_fraction = float(max_inventory_item_fraction)
         self.max_locked_item_fraction = float(max_locked_item_fraction)
         self.max_sector_fraction = float(max_sector_fraction)
@@ -57,11 +64,19 @@ class CapitalDayAllocator:
     @staticmethod
     def _f(c: dict, key: str, default: float = 0.0) -> float:
         try:
-            return float(c.get(key, default))
+            v = float(c.get(key, default))
+            return v if math.isfinite(v) else float(default)
         except Exception:
             return float(default)
 
-    def allocate(self, candidates: list[dict], existing: list[dict] | None = None) -> AllocationResult:
+    def _is_locked(self, c: dict) -> bool:
+        if bool(c.get("locked")):
+            return True
+        return self._f(c, "locked_net_roi", 0.0) > 0.0
+
+    def allocate(
+        self, candidates: list[dict], existing: list[dict] | None = None
+    ) -> AllocationResult:
         existing = list(existing or [])
         reserve = self.capital * self.cash_buffer_fraction
         sector_used: dict[str, float] = {}
@@ -74,11 +89,21 @@ class CapitalDayAllocator:
         for p in existing:
             cost = max(0.0, self._f(p, "acquisition_cost"))
             used += cost
-            days = max(1.0, self._f(p, "expected_days", self._f(p, "expected_holding_days", 365.0)))
-            if days > self.medium_days:
-                medium_used += cost
-            if days > self.slow_days:
-                slow_used += cost
+            days = max(
+                1.0,
+                self._f(
+                    p,
+                    "expected_days",
+                    self._f(p, "expected_holding_days", 365.0),
+                ),
+            )
+            # Maturity buckets are inventory constraints. A genuinely executable
+            # locked exit is controlled by its own item/source/sector limits.
+            if not self._is_locked(p):
+                if days > self.medium_days:
+                    medium_used += cost
+                if days > self.slow_days:
+                    slow_used += cost
             sector = str(p.get("sector") or "unknown")
             source = str(p.get("buy_source") or p.get("buy_venue") or "unknown")
             sector_used[sector] = sector_used.get(sector, 0.0) + cost
@@ -107,7 +132,7 @@ class CapitalDayAllocator:
             cost = self._f(c, "acquisition_cost")
             if cost <= 0 or cost > available:
                 continue
-            locked = bool(c.get("locked") or c.get("locked_net_roi") is not None)
+            locked = self._is_locked(c)
             days = max(self._f(c, "expected_holding_days", 365.0), 1.0)
             score = self._f(c, "score_per_capital_day", -1e9)
             sale30 = self._f(c, "sale_prob_30d", 0.0)
@@ -126,7 +151,9 @@ class CapitalDayAllocator:
                     continue
 
             item_cap = self.capital * (
-                self.max_locked_item_fraction if locked else self.max_inventory_item_fraction
+                self.max_locked_item_fraction
+                if locked
+                else self.max_inventory_item_fraction
             )
             if cost > item_cap:
                 continue
@@ -136,17 +163,33 @@ class CapitalDayAllocator:
                 continue
             sector = str(c.get("sector") or "unknown")
             source = str(c.get("buy_source") or c.get("buy_venue") or "unknown")
-            if sector_used.get(sector, 0.0) + cost > self.capital * self.max_sector_fraction:
+            if (
+                sector_used.get(sector, 0.0) + cost
+                > self.capital * self.max_sector_fraction
+            ):
                 continue
-            if source_used.get(source, 0.0) + cost > self.capital * self.max_source_fraction:
+            if (
+                source_used.get(source, 0.0) + cost
+                > self.capital * self.max_source_fraction
+            ):
                 continue
 
-            # Explicit maturity buckets. At most 45% of total capital can have an
-            # expected hold >14d, and only 20% can have expected hold >21d.
-            if days > self.medium_days and medium_used + cost > self.capital * self.max_medium_inventory_fraction:
-                continue
-            if days > self.slow_days and slow_used + cost > self.capital * self.max_slow_inventory_fraction:
-                continue
+            # Explicit maturity buckets apply only to inventory. At most 45% of
+            # total capital can have expected hold >14d, and only 20% can have
+            # expected hold >21d.
+            if not locked:
+                if (
+                    days > self.medium_days
+                    and medium_used + cost
+                    > self.capital * self.max_medium_inventory_fraction
+                ):
+                    continue
+                if (
+                    days > self.slow_days
+                    and slow_used + cost
+                    > self.capital * self.max_slow_inventory_fraction
+                ):
+                    continue
 
             lcb_roi = self._f(c, "lcb_net_roi", -1.0)
             if lcb_roi <= 0:
@@ -155,10 +198,11 @@ class CapitalDayAllocator:
             selected.append(c)
             available -= cost
             used += cost
-            if days > self.medium_days:
-                medium_used += cost
-            if days > self.slow_days:
-                slow_used += cost
+            if not locked:
+                if days > self.medium_days:
+                    medium_used += cost
+                if days > self.slow_days:
+                    slow_used += cost
             sector_used[sector] = sector_used.get(sector, 0.0) + cost
             source_used[source] = source_used.get(source, 0.0) + cost
             if entity:
