@@ -1,3 +1,5 @@
+import pytest
+
 from roman_arb.production import ShadowLiveEngine
 
 
@@ -45,10 +47,14 @@ def test_closed_executable_outcome_updates_value_and_hazard_only(tmp_path):
         )
         assert learned == 1
         assert engine.model.hierarchy.global_stat.n == 1
-        assert engine.model.hierarchy.predict("cards", "graded", "id:cards:x").price == 120.0
+        estimate = engine.model.hierarchy.predict(
+            "cards", "graded", "id:cards:x"
+        )
+        assert estimate is not None
+        assert estimate.price == pytest.approx(120.0)
         hz = engine.model.hazard.stats["cards|graded"]
         assert hz.sales == 1.0
-        assert hz.exposure_days == 5.0
+        assert hz.exposure_days == pytest.approx(5.0)
         # P&L was positive, but seller quality must not be inferred from P&L.
         assert "seller-a:buy->exit" not in engine.model.sellers.stats
     finally:
