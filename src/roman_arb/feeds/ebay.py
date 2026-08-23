@@ -12,10 +12,10 @@ from .http_utils import basic_auth, get_json, post_form_json
 class EbayBrowseFeed:
     name = "ebay"
 
-    def __init__(self, marketplace: str = "EBAY_CH"):
+    def __init__(self, marketplace: str | None = None):
         self.client_id = os.getenv("EBAY_CLIENT_ID", "")
         self.secret = os.getenv("EBAY_CLIENT_SECRET", "")
-        self.marketplace = marketplace
+        self.marketplace = marketplace or os.getenv("EBAY_MARKETPLACE_ID", "EBAY_CH")
         self._token = ""
         self._token_expires_at = 0.0
 
@@ -46,8 +46,6 @@ class EbayBrowseFeed:
         except Exception:
             ttl = 7200.0
         self._token = token
-        # Renew before the official expiry so a long-running shadow daemon cannot
-        # get stuck on a cached bearer token.
         self._token_expires_at = now + max(1.0, ttl - 60.0)
         return self._token
 

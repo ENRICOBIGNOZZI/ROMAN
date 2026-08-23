@@ -33,9 +33,9 @@ def official_adapters():
         "etsy": EtsyFeed(),
         "rakuten_ichiba": RakutenIchibaFeed(),
     }
-    # Public/read-only discovery feeds.  These are useful for a credential-free
-    # pipeline smoke test; cross-country opportunities are heavily penalized by
-    # the live engine and are never labelled locked arbitrage without a real bid.
+    # Mercado Libre site adapters are read-only but credential-gated. Without an
+    # authorized MELI_ACCESS_TOKEN they remain NO_CREDENTIALS/PRE-SHADOW rather
+    # than repeatedly treating auth failures as market-data observations.
     for site, suffix in (
         ("MLM", "mx"),
         ("MLA", "ar"),
