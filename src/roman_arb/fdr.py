@@ -24,7 +24,6 @@ def _entity_key(c: dict) -> str:
 
 
 def _candidate_key(c: dict) -> str:
-    """Stable route-level key; one economic entity can have several routes."""
     return "|".join(
         (
             _entity_key(c),
@@ -35,18 +34,24 @@ def _candidate_key(c: dict) -> str:
     )
 
 
+def _predictive_confidence(c: dict) -> float:
+    """Read the unified-model confidence with a legacy field fallback."""
+    if c.get("predictive_confidence") is not None:
+        return _finite(c.get("predictive_confidence"), 0.0)
+    return _finite(c.get("ensemble_confidence"), 0.0)
+
+
 class PosteriorFDRSelector:
     """Provisional confidence-budget gate for the wide universe.
 
-    ``ensemble_confidence`` is *not* yet a calibrated posterior probability. Until
-    forward outcomes are available, this class is deliberately only a conservative
+    Predictive confidence is not yet a calibrated posterior probability. Until
+    forward outcomes exist, this class is deliberately a conservative
     ranking/selection gate, not a claim of exact frequentist FDR control.
 
-    The selector first keeps one economically best route per entity (maximum net
-    LCB profit per capital-day), then selects the largest confidence-ranked prefix
-    whose mean local false score ``1-confidence`` does not exceed ``alpha``. Only
-    the exact selected route is annotated. This prevents confidence from one route
-    leaking to every candidate that shares the same entity key.
+    The selector keeps one economically best route per entity, then selects the
+    largest confidence-ranked prefix whose mean local false score
+    ``1-confidence`` does not exceed ``alpha``. Only the exact selected route is
+    annotated.
     """
 
     def __init__(self, alpha: float = 0.25):
@@ -62,16 +67,15 @@ class PosteriorFDRSelector:
             if prev is None:
                 best[entity] = c
                 continue
-            # Economic route choice first; confidence is a tie-breaker only.
             cur_rank = (
                 _finite(c.get("score_per_capital_day"), -1e9),
                 _finite(c.get("lcb_net_roi"), -1e9),
-                _finite(c.get("ensemble_confidence"), 0.0),
+                _predictive_confidence(c),
             )
             prev_rank = (
                 _finite(prev.get("score_per_capital_day"), -1e9),
                 _finite(prev.get("lcb_net_roi"), -1e9),
-                _finite(prev.get("ensemble_confidence"), 0.0),
+                _predictive_confidence(prev),
             )
             if cur_rank > prev_rank:
                 best[entity] = c
@@ -80,10 +84,7 @@ class PosteriorFDRSelector:
     def select(self, candidates: list[dict]) -> FDRResult:
         rows = []
         for c in self._best_route_per_entity(candidates):
-            conf = max(
-                0.0,
-                min(1.0, _finite(c.get("ensemble_confidence"), 0.0)),
-            )
+            conf = max(0.0, min(1.0, _predictive_confidence(c)))
             local_false = 1.0 - conf
             rows.append((local_false, _candidate_key(c), c))
 
@@ -95,11 +96,11 @@ class PosteriorFDRSelector:
         )
         chosen: list[str] = []
         running = 0.0
-        for lf, key, _ in rows:
-            new_mean = (running + lf) / (len(chosen) + 1)
+        for local_false, key, _ in rows:
+            new_mean = (running + local_false) / (len(chosen) + 1)
             if new_mean <= self.alpha:
                 chosen.append(key)
-                running += lf
+                running += local_false
             else:
                 break
         mean = running / len(chosen) if chosen else 0.0
