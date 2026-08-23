@@ -16,7 +16,7 @@ def default_registry_path():
 
 
 def load_source_registry(path=None):
-    p=Path(path) if path else default_registry_path()
+    p = Path(path) if path else default_registry_path()
     if p.name.endswith(".z64"):
         import base64, zlib
         raw = json.loads(zlib.decompress(base64.b64decode(p.read_text().strip())).decode("utf-8"))
@@ -26,11 +26,24 @@ def load_source_registry(path=None):
 
 
 def official_adapters():
-    return {
+    adapters = {
         "ebay": EbayBrowseFeed(),
         "stockx": StockXMarketFeed(),
         "reverb": ReverbFeed(),
         "etsy": EtsyFeed(),
-        "mercadolibre": MercadoLibreFeed(),
         "rakuten_ichiba": RakutenIchibaFeed(),
     }
+    # Public/read-only discovery feeds.  These are useful for a credential-free
+    # pipeline smoke test; cross-country opportunities are heavily penalized by
+    # the live engine and are never labelled locked arbitrage without a real bid.
+    for site, suffix in (
+        ("MLM", "mx"),
+        ("MLA", "ar"),
+        ("MLB", "br"),
+        ("MLC", "cl"),
+        ("MCO", "co"),
+        ("MLU", "uy"),
+    ):
+        name = f"mercadolibre_{suffix}"
+        adapters[name] = MercadoLibreFeed(site_id=site, source_name=name)
+    return adapters
