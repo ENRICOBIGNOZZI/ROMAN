@@ -8,6 +8,8 @@ from roman_arb.condition_model import ConditionRiskModel
 from roman_arb.regime import RegimeDetector
 from roman_arb.ensemble import ConservativeEnsemble
 from roman_arb.model_stack import SimpleModelStack
+from roman_arb.anomaly import CrossMarketAnomalyModel
+from roman_arb.allocator import CapitalDayAllocator
 
 
 def test_hierarchical_fair_value_shrinks_sparse_product():
@@ -97,3 +99,52 @@ def test_factor_overlay_stays_bounded():
     from roman_arb.factors import residual_discount_overlay
     assert residual_discount_overlay(0.0, -100.0, 1.0) <= 0.0250001
     assert residual_discount_overlay(0.0, 100.0, 1.0) >= -0.0250001
+
+
+def test_anomaly_model_downweights_stale_comparables():
+    m = CrossMarketAnomalyModel(min_comparables=3)
+    fresh = m.score(100, [
+        {"net_value": 120, "freshness": 1, "executable_confidence": 1},
+        {"net_value": 121, "freshness": 1, "executable_confidence": 1},
+        {"net_value": 119, "freshness": 1, "executable_confidence": 1},
+    ])
+    stale = m.score(100, [
+        {"net_value": 120, "freshness": 0.1, "executable_confidence": 0.2},
+        {"net_value": 121, "freshness": 0.1, "executable_confidence": 0.2},
+        {"net_value": 119, "freshness": 0.1, "executable_confidence": 0.2},
+    ])
+    assert fresh is not None and stale is not None
+    assert fresh.confidence > stale.confidence
+
+
+def test_dynamic_factor_adjustment_is_bounded_inside_stack():
+    s = SimpleModelStack(min_lcb_roi=0.001, lcb_z=0.5)
+    s.update_dynamic_factors({"market": 0.01})
+    s.update_dynamic_factors({"market": 0.012})
+    for _ in range(8):
+        s.sellers.update("seller", True, 0.02)
+    out = s.score({
+        "buy_price": 100,
+        "base_fair_value": 120,
+        "sector": "sneakers",
+        "title": "new authenticated",
+        "seller_route_key": "seller",
+        "exit_fee_rate": 0.02,
+        "factor_loadings": {"market": 1.0},
+        "item_return": -0.20,
+        "model_sigma_roi": 0.001,
+    })
+    assert out.factor_net_roi is not None
+    assert abs(out.factor_net_roi - out.fair_value_net_roi) <= 0.0200001
+
+
+def test_allocator_respects_10k_cash_buffer_and_item_cap():
+    a = CapitalDayAllocator(capital=10000, cash_buffer_fraction=0.10)
+    rows = [
+        {"trade": True, "entity_key": "a", "sector": "cards", "buy_source": "ebay", "acquisition_cost": 2500, "lcb_net_roi": 0.04, "expected_holding_days": 8, "score_per_capital_day": 0.005},
+        {"trade": True, "entity_key": "b", "sector": "lego", "buy_source": "bricklink", "acquisition_cost": 2500, "lcb_net_roi": 0.03, "expected_holding_days": 10, "score_per_capital_day": 0.003},
+        {"trade": True, "entity_key": "c", "sector": "watches", "buy_source": "chrono24", "acquisition_cost": 5000, "lcb_net_roi": 0.05, "expected_holding_days": 15, "score_per_capital_day": 0.0033},
+    ]
+    r = a.allocate(rows)
+    assert r.capital_used <= 9000.0001
+    assert all(float(x["acquisition_cost"]) <= 3000.0001 for x in r.selected)
