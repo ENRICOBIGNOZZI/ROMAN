@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/live-smoke.yml'
+  pull_request:
+    paths:
+      - 'LIVE_SMOKE_TRIGGER'
   workflow_dispatch:
 
 permissions:
