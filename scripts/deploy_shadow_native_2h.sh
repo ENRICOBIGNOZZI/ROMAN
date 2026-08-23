@@ -26,7 +26,7 @@ cd "$ROOT"
 mkdir -p data outputs/live outputs/archive
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
-for f in data/roman_snapshots.sqlite data/roman_tracking.sqlite data/roman_shadow.sqlite outputs/live/dashboard.json outputs/live/diagnostic_report.json outputs/live/diagnostic_report.md; do
+for f in data/roman_snapshots.sqlite data/roman_reference.sqlite data/roman_tracking.sqlite data/roman_shadow.sqlite outputs/live/dashboard.json outputs/live/diagnostic_report.json outputs/live/diagnostic_report.md; do
   if [ -f "$f" ]; then
     mv "$f" "outputs/archive/${STAMP}_$(basename "$f")"
   fi
@@ -39,8 +39,8 @@ source .venv/bin/activate
 python -m pip install --upgrade pip >/dev/null
 python -m pip install -e .
 
-# Load user credentials if present. Empty .env values are harmless; public
-# read-only feeds can still provide a credential-free smoke/diagnostic stream.
+# Load user credentials if present. Empty .env values are harmless; explicitly
+# public reference downloads (e.g. Cardmarket guides) remain credential-free.
 set -a
 # shellcheck disable=SC1091
 source .env
