@@ -16,7 +16,7 @@ class ShadowLiveEngine(_BaseShadowLiveEngine):
 
     1. keep the exact scored candidate set that produced ledger marks;
     2. learn online only from positions the ledger actually closes against fresh
-       executable evidence;
+       executable evidence from the same exit route;
     3. expose expected net ROI separately from its lower-confidence bound.
 
     Current asks, model marks and repeated locked quotes never become persistent
@@ -47,14 +47,37 @@ class ShadowLiveEngine(_BaseShadowLiveEngine):
         except Exception:
             return float(default)
 
+    def _event_exit_source(self, event: dict) -> str:
+        explicit = str(event.get("exit_source") or "")
+        if explicit:
+            return explicit
+        position_id = str(event.get("position_id") or "")
+        if not position_id:
+            return ""
+        row = self.ledger.db.execute(
+            """SELECT meta_json FROM shadow_marks
+               WHERE position_id=? ORDER BY observed_at DESC LIMIT 1""",
+            (position_id,),
+        ).fetchone()
+        if row is None:
+            return ""
+        try:
+            meta = json.loads(row[0] or "{}")
+        except Exception:
+            return ""
+        return str(meta.get("executable_exit_source") or "")
+
     def _matching_executable_candidate(self, event: dict) -> dict | None:
         entity = str(event.get("entity_key") or "")
-        if not entity:
+        exit_source = self._event_exit_source(event)
+        if not entity or not exit_source:
             return None
         target = self._finite(event.get("close_value"), -1.0)
         options: list[tuple[float, dict]] = []
         for candidate in self._last_scored_candidates:
             if str(candidate.get("entity_key") or "") != entity:
+                continue
+            if str(candidate.get("exit_source") or "") != exit_source:
                 continue
             if not bool(candidate.get("locked")):
                 continue
