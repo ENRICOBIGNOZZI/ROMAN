@@ -5,9 +5,11 @@ from pathlib import Path
 
 from .bricklink import BrickLinkPriceGuideFeed
 from .cardmarket_public import CardmarketPublicReferenceFeed
+from .cardtrader import CardTraderMarketFeed
 from .discogs import DiscogsReferenceFeed
 from .ebay import EbayBrowseFeed
 from .etsy import EtsyFeed
+from .keepa import KeepaReferenceFeed
 from .mercadolibre import MercadoLibreFeed
 from .pricecharting import PriceChartingFeed
 from .rakuten import RakutenIchibaFeed
@@ -15,6 +17,7 @@ from .reverb import ReverbFeed
 from .ricardo import RicardoSearchFeed
 from .stockx import StockXMarketFeed
 from .tcgapi import TCGReferenceFeed
+from .watchcharts import WatchChartsReferenceFeed
 
 
 def default_registry_path():
@@ -53,6 +56,7 @@ def official_adapters():
         "rakuten_ichiba": RakutenIchibaFeed(),
         "ricardo": RicardoSearchFeed(),
         "pricecharting": PriceChartingFeed(include_reference_fallback=False),
+        "cardtrader": CardTraderMarketFeed(),
     }
     for site, suffix in (
         ("MLM", "mx"),
@@ -80,4 +84,6 @@ def reference_adapters():
             include_marketplace_offers=False,
             include_reference_fallback=True,
         ),
+        "watchcharts_reference": WatchChartsReferenceFeed(),
+        "keepa_reference": KeepaReferenceFeed(),
     }
