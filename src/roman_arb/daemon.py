@@ -8,7 +8,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from roman_arb.live import ShadowLiveEngine
+from roman_arb.production import ShadowLiveEngine
 
 
 class State:
@@ -163,8 +163,9 @@ def main():
         while True:
             t0 = time.time()
             try:
-                # One canonical economic pipeline lives in ShadowLiveEngine.
-                # The daemon only schedules cycles and serves/normalizes telemetry.
+                # One canonical economic pipeline lives in the production
+                # ShadowLiveEngine. The daemon only schedules cycles and serves
+                # or normalizes telemetry.
                 payload = engine.run_cycle(fdr_alpha=fdr_alpha)
                 payload["experiment"]["target_hours"] = (
                     args.max_hours if args.max_hours > 0 else 48.0
