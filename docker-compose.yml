@@ -1,11 +1,11 @@
 services:
-  roman-live:
+  reselling-bot:
     build: .
-    container_name: roman-live
-    restart: unless-stopped
+    container_name: reselling-bot
+    restart: "no"
     env_file:
       - .env
-    command: ["python", "scripts/run_live_daemon.py", "--capital", "10000", "--interval", "300", "--queries-per-source", "8", "--limit", "25", "--health-port", "8787"]
+    command: ["python", "scripts/run_live_daemon.py", "--capital", "10000", "--interval", "300", "--queries-per-source", "4", "--limit", "30", "--health-port", "8787", "--max-hours", "48"]
     volumes:
       - ./data:/app/data
       - ./outputs:/app/outputs
