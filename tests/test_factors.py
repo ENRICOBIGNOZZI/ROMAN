@@ -50,10 +50,10 @@ def test_pca_uses_identical_train_and_live_centering_with_drift():
 def test_sparse_latest_cross_section_shrinks_factor_confidence():
     rng = np.random.default_rng(13)
     x = rng.normal(0.0, 0.01, size=(120, 6))
-    m = RobustPCAFactorModel(min_rows=24, min_series=4)
+    m = RobustPCAFactorModel(max_rank=2, min_rows=24, min_series=4)
     assert m.fit(x, list("abcdef")) is not None
     full = m.signals({k: 0.001 for k in "abcdef"})
-    sparse = m.signals({"a": 0.001, "b": 0.001, "c": 0.001})
+    sparse = m.signals({k: 0.001 for k in "abcd"})
     assert full and sparse
     assert sparse[0].confidence < full[0].confidence
 
