@@ -8,9 +8,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from roman_arb.fdr import PosteriorFDRSelector
 from roman_arb.live import ShadowLiveEngine
-from roman_arb.scheduler import AdaptiveQueryScheduler
 
 
 class State:
@@ -67,30 +65,11 @@ def normalize_payload(p: dict) -> dict:
                 "status": status,
                 "rows": x.get("rows", 0),
                 "last_update": x.get("last_update", x.get("last", "")),
-                # Keep the cause visible in artifacts. The old normalizer dropped
-                # this field and made a zero-row network failure look unexplained.
                 "error": str(x.get("error") or "")[:500],
             }
         )
     q["feeds"] = feeds
     return q
-
-
-def _record_scheduler_feedback(tracking_db: str, candidates: list[dict]) -> str:
-    """Reward live queries without allowing telemetry failure to stop the engine."""
-    sch = None
-    try:
-        sch = AdaptiveQueryScheduler(tracking_db)
-        sch.record_candidates(candidates)
-        return ""
-    except Exception as exc:
-        return str(exc)[:500]
-    finally:
-        if sch is not None:
-            try:
-                sch.close()
-            except Exception:
-                pass
 
 
 def handler_factory(state):
@@ -166,7 +145,7 @@ def main():
         queries_per_source=args.queries_per_source,
         rows_per_query=args.limit,
     )
-    fdr = PosteriorFDRSelector(float(os.getenv("ROMAN_FDR_ALPHA", "0.25")))
+    fdr_alpha = float(os.getenv("ROMAN_FDR_ALPHA", "0.25"))
     state = State()
     state.payload.update(capital=args.capital, nav=args.capital)
     server = ThreadingHTTPServer(
@@ -184,42 +163,9 @@ def main():
         while True:
             t0 = time.time()
             try:
-                counts = engine.collect_cycle()
-                candidates = engine.build_candidates()
-                fdr_result = fdr.annotate(candidates)
-                for c in candidates:
-                    c["pre_fdr_trade"] = bool(c.get("trade"))
-                    c["trade"] = bool(c.get("fdr_selected"))
-
-                # Query UCB must receive the outcomes of the scoring stage. In the
-                # old daemon it only saw scans/failures, so it was not adaptive to
-                # economic signal quality at all.
-                scheduler_error = _record_scheduler_feedback(
-                    args.tracking_db, candidates
-                )
-
-                # Existing inventory is evaluated first. Only a fresh executable
-                # route can close a position; marks/comparable asks never do.
-                engine.ledger.mark(candidates)
-                closed = engine.ledger.apply_exit_policy()
-
-                # Freed cash is immediately visible to the allocator. Newly opened
-                # positions cannot close in the same cycle because the exit policy
-                # already ran above.
-                basket = engine.allocate(candidates)
-                engine.record_cycle(counts, candidates, len(fdr_result.selected))
-                payload = engine.dashboard_payload(candidates, basket)
-                ledger_summary = engine.ledger.summary()
-                payload["cycle_rows"] = counts
-                payload["closed_this_cycle"] = closed
-                payload["realized_pnl"] = ledger_summary.realized_pnl
-                payload["aged_capital"] = ledger_summary.aged_capital
-                payload["scheduler_error"] = scheduler_error
-                payload["posterior_fdr"] = {
-                    "alpha": fdr_result.alpha,
-                    "mean_false_probability": fdr_result.mean_false_probability,
-                    "selected": len(fdr_result.selected),
-                }
+                # One canonical economic pipeline lives in ShadowLiveEngine.
+                # The daemon only schedules cycles and serves/normalizes telemetry.
+                payload = engine.run_cycle(fdr_alpha=fdr_alpha)
                 payload["experiment"]["target_hours"] = (
                     args.max_hours if args.max_hours > 0 else 48.0
                 )
@@ -243,20 +189,18 @@ def main():
                     for k, v in engine.feed_state.items()
                     if v.get("error")
                 }
+                posterior = payload.get("posterior_fdr", {})
                 print(
                     json.dumps(
                         {
                             "status": payload.get("status"),
-                            "rows": counts,
+                            "rows": payload.get("cycle_rows", {}),
                             "feed_errors": feed_errors,
-                            "scheduler_error": scheduler_error,
-                            "raw": len(candidates),
-                            "pre_fdr": sum(
-                                1 for c in candidates if c.get("pre_fdr_trade")
-                            ),
-                            "fdr_selected": len(fdr_result.selected),
+                            "scheduler_error": payload.get("scheduler_error", ""),
+                            "raw": payload.get("raw_signals", 0),
+                            "fdr_selected": posterior.get("selected", 0),
                             "opened": engine._last_new_positions,
-                            "closed": len(closed),
+                            "closed": len(payload.get("closed_this_cycle", []) or []),
                             "open_positions": payload.get("open_positions"),
                             "deployed": payload.get("deployed"),
                             "cash": payload.get("cash"),

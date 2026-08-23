@@ -5,7 +5,7 @@ import math
 import os
 import sqlite3
 from collections import Counter, defaultdict
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +13,7 @@ import numpy as np
 from .allocator import CapitalDayAllocator
 from .config import load_config
 from .entity import entity_key, structured_codes
+from .fdr import PosteriorFDRSelector
 from .feeds import load_source_registry, official_adapters
 from .fees import FeeEngine
 from .fx import FXBook, refresh_ecb
@@ -21,7 +22,7 @@ from .scheduler import AdaptiveQueryScheduler
 from .shadow_ledger import ShadowLedger
 from .snapshot import SnapshotStore
 
-_PUBLIC_DISCOVERY = {
+_MERCADOLIBRE_MARKETS = {
     "mercadolibre_mx",
     "mercadolibre_ar",
     "mercadolibre_br",
@@ -29,9 +30,9 @@ _PUBLIC_DISCOVERY = {
     "mercadolibre_co",
     "mercadolibre_uy",
 }
-_BROAD_MARKETS = {"ebay", "mercadolibre", "rakuten_ichiba"} | _PUBLIC_DISCOVERY
+_BROAD_MARKETS = {"ebay", "mercadolibre", "rakuten_ichiba"} | _MERCADOLIBRE_MARKETS
 
-# High-identity diagnostic seeds.  They are deliberately SKU/reference-heavy so
+# High-identity diagnostic seeds. They are deliberately SKU/reference-heavy so
 # the same economic object has a chance to be found on more than one market.
 _SEED_LIVE_QUERIES = [
     "Rolex 124270",
@@ -72,7 +73,11 @@ def _parse_ts(x):
 
 
 def _weighted_median(values: list[tuple[float, float]]) -> float | None:
-    clean = sorted((float(v), max(0.0, float(w))) for v, w in values if v and v > 0 and w > 0)
+    clean = sorted(
+        (float(v), max(0.0, float(w)))
+        for v, w in values
+        if v and v > 0 and w > 0
+    )
     if not clean:
         return None
     total = sum(w for _, w in clean)
@@ -86,14 +91,16 @@ def _weighted_median(values: list[tuple[float, float]]) -> float | None:
 
 def build_query_plan(config_path: str | None = None) -> dict[str, list[str]]:
     _, _, sectors = load_config(config_path)
-    registry = set(load_source_registry()) | _PUBLIC_DISCOVERY
+    registry = set(load_source_registry()) | _MERCADOLIBRE_MARKETS
     names = [s.name for s in sectors.values()]
     plan: dict[str, list[str]] = {}
     for source in registry:
         if source in _BROAD_MARKETS:
             queries = _SEED_LIVE_QUERIES + names
         else:
-            queries = [s.name for s in sectors.values() if source in set(s.source_venues)]
+            queries = [
+                s.name for s in sectors.values() if source in set(s.source_venues)
+            ]
         if queries:
             plan[source] = list(dict.fromkeys(q for q in queries if q))
     if len(plan) < 20:
@@ -115,7 +122,8 @@ def _latest_rows(db_path: str, max_age_hours: float = 12.0):
     q = """SELECT l.* FROM listings l JOIN (
       SELECT source,external_id,MAX(observed_at) observed_at FROM listings
       WHERE observed_at>=? GROUP BY source,external_id
-    ) z ON l.source=z.source AND l.external_id=z.external_id AND l.observed_at=z.observed_at WHERE l.price>0"""
+    ) z ON l.source=z.source AND l.external_id=z.external_id
+       AND l.observed_at=z.observed_at WHERE l.price>0"""
     rows = [dict(r) for r in db.execute(q, (cutoff,))]
     db.close()
     for r in rows:
@@ -132,7 +140,9 @@ def _age_h(row):
 
 
 def _freshness(row, half_life_h=6.0):
-    return math.exp(-math.log(2.0) * _age_h(row) / max(half_life_h, 1e-6))
+    return math.exp(
+        -math.log(2.0) * _age_h(row) / max(half_life_h, 1e-6)
+    )
 
 
 def _group_key(row):
@@ -166,21 +176,29 @@ class ShadowLiveEngine:
         self.assumptions, self.venues, self.sectors = load_config()
         self.fees = FeeEngine(self.venues)
         self.model = SimpleModelStack(
-            min_lcb_roi=max(0.002, float(self.assumptions.get("min_lcb_roi", 0.003))),
+            min_lcb_roi=max(
+                0.002, float(self.assumptions.get("min_lcb_roi", 0.003))
+            ),
             lcb_z=max(1.0, float(self.assumptions.get("lcb_z", 1.28))),
         )
-        self.allocator = CapitalDayAllocator(capital=self.capital, cash_buffer_fraction=0.10)
+        self.allocator = CapitalDayAllocator(
+            capital=self.capital,
+            cash_buffer_fraction=float(
+                self.assumptions.get("cash_buffer_fraction", 0.20)
+            ),
+        )
         self.ledger = ShadowLedger(self.shadow_db, capital=self.capital)
         self.plan = build_query_plan()
         self.adapters = official_adapters()
         self.started_at = _now()
         self.feed_state: dict[str, dict] = {}
         self._followup_codes: list[str] = []
-        self._last_entity_price: dict[str, float] = {}
+        # Returns are formed within the same marketplace for a given entity. A
+        # changing cross-market composition must not be mistaken for a price move.
+        self._last_entity_source_price: dict[tuple[str, str], float] = {}
         self._return_history: list[dict[str, float]] = []
         self._pca_signal_by_entity: dict[str, object] = {}
         self._latest_entity_return: dict[str, float] = {}
-        self._seen_locked_training: set[str] = set()
         self._cycle_no = 0
         self._last_new_positions = 0
 
@@ -194,7 +212,9 @@ class ShadowLiveEngine:
             try:
                 refresh_ecb(
                     self.fx_path,
-                    friction_pct=float(os.getenv("ROMAN_FX_FRICTION", "0.004")),
+                    friction_pct=float(
+                        os.getenv("ROMAN_FX_FRICTION", "0.004")
+                    ),
                 )
                 b = FXBook.load(self.fx_path)
             except Exception:
@@ -205,7 +225,6 @@ class ShadowLiveEngine:
         new_codes = []
         for r in rows:
             for code in structured_codes(r.title):
-                # Avoid year-like/generic identifiers and keep high-identity refs.
                 if len(code) >= 5 and code not in self._followup_codes:
                     new_codes.append(code)
         if not new_codes:
@@ -213,7 +232,9 @@ class ShadowLiveEngine:
         self._followup_codes = (new_codes + self._followup_codes)[:160]
         for source in _BROAD_MARKETS:
             base = self.plan.get(source, [])
-            self.plan[source] = list(dict.fromkeys(new_codes[:25] + base))[:650]
+            self.plan[source] = list(
+                dict.fromkeys(new_codes[:25] + base)
+            )[:650]
 
     def collect_cycle(self):
         store = SnapshotStore(self.snapshot_db)
@@ -235,7 +256,9 @@ class ShadowLiveEngine:
                 err = ""
                 for q in chosen:
                     try:
-                        rows = list(adapter.fetch(q, limit=self.rows_per_query))
+                        rows = list(
+                            adapter.fetch(q, limit=self.rows_per_query)
+                        )
                         for r in rows:
                             r.extra = dict(r.extra or {}, query=q)
                         store.append(rows)
@@ -247,7 +270,9 @@ class ShadowLiveEngine:
                         sch.record_error(source, q, err)
                 counts[source] = total
                 self.feed_state[source] = {
-                    "status": "OK" if not err else ("PARTIAL" if total else "ERROR"),
+                    "status": "OK"
+                    if not err
+                    else ("PARTIAL" if total else "ERROR"),
                     "rows": total,
                     "last": _iso(),
                     "error": err,
@@ -278,8 +303,6 @@ class ShadowLiveEngine:
         if best[1]:
             return best[1].key, best[1].family
 
-        # Reference-heavy seed queries need a deterministic fallback because the
-        # query string is a model/SKU, not a sector name.
         aliases = [
             (("rolex", "omega", "cartier", "speedmaster", "seiko"), "modern_watches"),
             (("lego",), "lego_sealed"),
@@ -305,34 +328,51 @@ class ShadowLiveEngine:
             k = _group_key(r)
             if not k:
                 continue
-            eur = fx.to_eur(float(r["price"]), str(r.get("currency") or ""), False)
+            eur = fx.to_eur(
+                float(r["price"]), str(r.get("currency") or ""), False
+            )
             if eur and eur > 0:
                 rr = dict(r, entity_key=k, price_eur=eur)
                 groups[k].append(rr)
         return groups
 
     def _update_return_models(self, groups: dict[str, list[dict]]) -> None:
-        current: dict[str, float] = {}
+        current: dict[tuple[str, str], float] = {}
         entity_sector: dict[str, str] = {}
+        entity_sources: dict[str, set[str]] = defaultdict(set)
+
         for k, rows in groups.items():
-            vals = [float(r["price_eur"]) for r in rows if float(r.get("price_eur") or 0) > 0]
-            if not vals:
-                continue
-            current[k] = float(np.median(vals))
+            by_source: dict[str, list[float]] = defaultdict(list)
+            for r in rows:
+                v = float(r.get("price_eur") or 0.0)
+                if v > 0 and math.isfinite(v):
+                    by_source[str(r.get("source") or "unknown")].append(v)
+            for source, vals in by_source.items():
+                current[(k, source)] = float(np.median(vals))
+                entity_sources[k].add(source)
             sk, _ = self._sector(rows[0])
             entity_sector[k] = sk
 
         returns: dict[str, float] = {}
         sector_returns: dict[str, list[float]] = defaultdict(list)
-        for k, price in current.items():
-            prev = self._last_entity_price.get(k)
-            if prev and prev > 0:
+        for k, sources in entity_sources.items():
+            same_source_returns = []
+            for source in sources:
+                price = current.get((k, source))
+                prev = self._last_entity_source_price.get((k, source))
+                if not price or not prev or prev <= 0:
+                    continue
                 ret = math.log(price / prev)
                 if math.isfinite(ret) and abs(ret) <= 0.40:
-                    returns[k] = ret
-                    sk = entity_sector.get(k, "unknown")
-                    if sk != "unknown":
-                        sector_returns[sk].append(ret)
+                    same_source_returns.append(ret)
+            if not same_source_returns:
+                continue
+            ret = float(np.median(same_source_returns))
+            returns[k] = ret
+            sk = entity_sector.get(k, "unknown")
+            if sk != "unknown":
+                sector_returns[sk].append(ret)
+
         self._latest_entity_return = returns
 
         factor_updates = {}
@@ -347,53 +387,32 @@ class ShadowLiveEngine:
             self._return_history.append(dict(returns))
             self._return_history = self._return_history[-180:]
 
-        # Fit PCA only after enough real temporal observations exist.  This is
-        # intentionally automatic warm-up, never a cold-start pseudo-factor.
         self._pca_signal_by_entity = {}
         if len(self._return_history) >= 12:
             coverage = Counter()
             for row in self._return_history:
                 coverage.update(row.keys())
             min_obs = max(6, len(self._return_history) // 3)
-            names = [k for k, n in coverage.most_common(40) if n >= min_obs]
+            names = [
+                k for k, n in coverage.most_common(40) if n >= min_obs
+            ]
             if len(names) >= 4:
-                x = np.full((len(self._return_history), len(names)), np.nan)
+                x = np.full(
+                    (len(self._return_history), len(names)), np.nan
+                )
                 idx = {n: j for j, n in enumerate(names)}
                 for i, row in enumerate(self._return_history):
-                    for k, v in row.items():
-                        if k in idx:
-                            x[i, idx[k]] = float(v)
+                    for key, value in row.items():
+                        if key in idx:
+                            x[i, idx[key]] = float(value)
                 fit = self.model.fit_pca(x, names)
                 if fit is not None:
                     sigs = self.model.factor_signals(returns)
-                    self._pca_signal_by_entity = {s.name: s for s in sigs}
+                    self._pca_signal_by_entity = {
+                        s.name: s for s in sigs
+                    }
 
-        self._last_entity_price = current
-
-    def _learn_locked_quotes(self, candidates: list[dict]) -> None:
-        for c in candidates:
-            if c.get("locked_net_roi") is None or not c.get("locked"):
-                continue
-            key = "|".join(
-                [
-                    str(c.get("entity_key") or ""),
-                    str(c.get("exit_source") or ""),
-                    f"{float(c.get('locked_net_roi') or 0):.6f}",
-                ]
-            )
-            if key in self._seen_locked_training:
-                continue
-            self._seen_locked_training.add(key)
-            net_value = float(c.get("acquisition_cost") or 0) * (
-                1.0 + float(c.get("locked_net_roi") or 0)
-            )
-            if net_value > 0:
-                self.model.hierarchy.update(
-                    net_value,
-                    str(c.get("sector") or "unknown"),
-                    str(c.get("family") or ""),
-                    str(c.get("entity_key") or ""),
-                )
+        self._last_entity_source_price = current
 
     def build_candidates(self):
         rows = _latest_rows(self.snapshot_db, 12)
@@ -413,7 +432,8 @@ class ShadowLiveEngine:
                 if s is None:
                     continue
                 buy_eur = fx.acquisition_eur(
-                    float(buy["price"]), str(buy.get("currency") or "")
+                    float(buy["price"]),
+                    str(buy.get("currency") or ""),
                 )
                 if not buy_eur:
                     continue
@@ -422,7 +442,9 @@ class ShadowLiveEngine:
                 fair_observations: list[tuple[float, float]] = []
                 best = None
                 best_conservative_net = -1e18
-                buy_site = str((buy.get("extra") or {}).get("site_id") or "")
+                buy_site = str(
+                    (buy.get("extra") or {}).get("site_id") or ""
+                )
 
                 for comp in g:
                     if (
@@ -433,22 +455,36 @@ class ShadowLiveEngine:
                     src = str(comp["source"])
                     gross = float(comp["price_eur"])
                     v = self.venues.get(src)
-                    # Unknown/public discovery venues receive a conservative
-                    # seller-cost assumption rather than a zero-cost fantasy.
                     fee = float(v.sell_fee) if v else 0.13
                     fixed = float(v.fixed_exit) if v else 0.0
                     vh = float(v.price_haircut) if v else 0.0
-                    comp_site = str((comp.get("extra") or {}).get("site_id") or "")
-                    cross_border = bool(buy_site and comp_site and buy_site != comp_site)
+                    comp_site = str(
+                        (comp.get("extra") or {}).get("site_id") or ""
+                    )
+                    cross_border = bool(
+                        buy_site and comp_site and buy_site != comp_site
+                    )
 
-                    # An ask is not cash.  Apply an execution markdown; then an
-                    # additional cross-border buffer and shipping reserve.
                     gross_mark = gross * (1.0 - vh) * 0.95
                     shipping = 0.0
                     if cross_border:
                         gross_mark *= 0.90
                         shipping = max(18.0, 0.015 * gross_mark)
-                    net = gross_mark * (1.0 - fee) - fixed - shipping
+
+                    # ``price_eur`` is an ECB-mid valuation. Actual conversion of
+                    # foreign exit proceeds must pay the same explicit FX friction
+                    # used elsewhere in the live engine.
+                    comp_currency = str(comp.get("currency") or "").upper()
+                    exit_fx_mult = (
+                        1.0 - fx.friction_pct
+                        if comp_currency and comp_currency != "EUR"
+                        else 1.0
+                    )
+                    net = (
+                        gross_mark * exit_fx_mult * (1.0 - fee)
+                        - fixed
+                        - shipping
+                    )
                     fr = _freshness(comp)
                     exec_conf = fr * (0.18 if cross_border else 0.32)
                     comps.append(
@@ -457,14 +493,26 @@ class ShadowLiveEngine:
                             "freshness": fr,
                             "executable_confidence": exec_conf,
                             "source": src,
+                            "currency": comp_currency,
                             "cross_border": cross_border,
                         }
                     )
-                    fair_observations.append((gross_mark, max(0.03, exec_conf)))
-                    conservative_net = net - 0.03 * gross_mark * (1.0 - exec_conf)
+                    fair_observations.append(
+                        (gross_mark, max(0.03, exec_conf))
+                    )
+                    conservative_net = net - 0.03 * gross_mark * (
+                        1.0 - exec_conf
+                    )
                     if conservative_net > best_conservative_net:
                         best_conservative_net = conservative_net
-                        best = (src, gross_mark, fee, fixed, shipping, cross_border)
+                        best = (
+                            src,
+                            gross_mark,
+                            fee,
+                            fixed,
+                            shipping,
+                            cross_border,
+                        )
 
                 locked = None
                 for comp in g:
@@ -472,7 +520,9 @@ class ShadowLiveEngine:
                     if hb in (None, "", 0, "0") or _age_h(comp) > 1.5:
                         continue
                     b = fx.to_eur(
-                        float(hb), str(comp.get("currency") or ""), True
+                        float(hb),
+                        str(comp.get("currency") or ""),
+                        True,
                     )
                     if b and (locked is None or b > locked[0]):
                         locked = (b, str(comp["source"]))
@@ -486,8 +536,16 @@ class ShadowLiveEngine:
                 if robust_fair is None or robust_fair <= 0:
                     continue
 
+                planned_exit_price = 0.0
                 if best is not None:
-                    exit_src, _, exit_fee, exit_fixed, exit_shipping, cross_border = best
+                    (
+                        exit_src,
+                        planned_exit_price,
+                        exit_fee,
+                        exit_fixed,
+                        exit_shipping,
+                        cross_border,
+                    ) = best
                 else:
                     exit_src = locked[1]
                     v = self.venues.get(exit_src)
@@ -504,6 +562,8 @@ class ShadowLiveEngine:
                     "family": fam,
                     "product": k,
                     "title": buy.get("title", ""),
+                    # Real marketplace condition text must reach the condition model.
+                    "description": str(buy.get("condition") or ""),
                     "buy_source": buy["source"],
                     "buy_external_id": buy["external_id"],
                     "buy_url": buy.get("url", ""),
@@ -511,15 +571,20 @@ class ShadowLiveEngine:
                     "buy_fee_rate": s.buy_cost_pct,
                     "buy_fixed": s.buy_fixed,
                     "base_fair_value": float(robust_fair),
+                    "planned_exit_price": float(planned_exit_price or robust_fair),
                     "exit_source": exit_src,
                     "exit_fee_rate": float(exit_fee),
                     "exit_fixed": float(exit_fixed),
                     "exit_shipping": float(exit_shipping),
                     "expected_fraud_loss": float(problem),
                     "model_sigma_roi": max(0.018, float(s.model_sigma)),
-                    "seller_route_key": f"{buy['source']}:{buy.get('seller','')}->{exit_src}",
+                    "seller_route_key": (
+                        f"{buy['source']}:{buy.get('seller', '')}->{exit_src}"
+                    ),
                     "comparables_net": comps,
-                    "buy_query": str((buy.get("extra") or {}).get("query") or ""),
+                    "buy_query": str(
+                        (buy.get("extra") or {}).get("query") or ""
+                    ),
                     "cross_border": bool(cross_border),
                 }
 
@@ -540,7 +605,9 @@ class ShadowLiveEngine:
                     c["factor_confidence"] = float(pca_sig.confidence)
                 elif k in self._latest_entity_return:
                     c["factor_loadings"] = {f"sector:{s.key}": 1.0}
-                    c["item_return"] = float(self._latest_entity_return[k])
+                    c["item_return"] = float(
+                        self._latest_entity_return[k]
+                    )
                     c["factor_residual_scale"] = 0.025
 
                 sc = self.model.score(c)
@@ -568,26 +635,52 @@ class ShadowLiveEngine:
                 out.append(row)
 
         out.sort(
-            key=lambda x: float(x.get("score_per_capital_day", -1e9)), reverse=True
+            key=lambda x: float(x.get("score_per_capital_day", -1e9)),
+            reverse=True,
         )
-        self._learn_locked_quotes(out)
         return out
+
+    def _record_scheduler_candidates(self, candidates: list[dict]) -> str:
+        sch = None
+        try:
+            sch = AdaptiveQueryScheduler(self.tracking_db)
+            sch.record_candidates(candidates)
+            return ""
+        except Exception as exc:
+            return str(exc)[:500]
+        finally:
+            if sch is not None:
+                try:
+                    sch.close()
+                except Exception:
+                    pass
 
     def allocate(self, candidates):
         existing = self.ledger.open_positions()
         result = self.allocator.allocate(
             [c for c in candidates if c.get("trade")], existing=existing
         )
-        self._last_new_positions = self.ledger.open_selected(list(result.selected))
+        self._last_new_positions = self.ledger.open_selected(
+            list(result.selected)
+        )
         self.ledger.mark(candidates)
         return self.ledger.open_positions()
 
-    def record_cycle(self, rows: dict, candidates: list[dict], fdr_selected: int) -> None:
-        reasons = Counter(str(c.get("reason") or "unknown") for c in candidates)
+    def record_cycle(
+        self,
+        rows: dict,
+        candidates: list[dict],
+        fdr_selected: int,
+    ) -> None:
+        reasons = Counter(
+            str(c.get("reason") or "unknown") for c in candidates
+        )
         self.ledger.log_cycle(
             rows=rows,
             raw_candidates=len(candidates),
-            pre_fdr=sum(1 for c in candidates if c.get("pre_fdr_trade")),
+            pre_fdr=sum(
+                1 for c in candidates if c.get("pre_fdr_trade")
+            ),
             fdr_selected=int(fdr_selected),
             new_positions=self._last_new_positions,
             reasons=dict(reasons),
@@ -617,12 +710,19 @@ class ShadowLiveEngine:
         ]
         pca_online = self.model.pca.fit_ is not None
         kalman_online = any(
-            f.state.initialized for f in self.model.dynamic_factors.filters.values()
+            f.state.initialized
+            for f in self.model.dynamic_factors.filters.values()
+        )
+        regime_online = any(
+            st.n >= 2 for st in self.model.regime.states.values()
         )
         return {
             "brand": "Reselling BOT",
             "status": "SHADOW-LIVE"
-            if any(v.get("status") == "OK" for v in self.feed_state.values())
+            if any(
+                v.get("status") == "OK"
+                for v in self.feed_state.values()
+            )
             else "PRE-SHADOW",
             "updated_at": _iso(),
             "capital": self.capital,
@@ -635,10 +735,14 @@ class ShadowLiveEngine:
             "open_positions": s.open_positions,
             "locked_positions": s.locked_positions,
             "raw_signals": len(candidates),
-            "qualified_signals": sum(1 for c in candidates if c.get("trade")),
-            "avg_net_roic": (s.executable_pnl / s.deployed_cost)
-            if s.deployed_cost > 0 and s.locked_positions > 0
-            else None,
+            "qualified_signals": sum(
+                1 for c in candidates if c.get("trade")
+            ),
+            "avg_net_roic": (
+                s.executable_pnl / s.deployed_cost
+                if s.deployed_cost > 0 and s.locked_positions > 0
+                else None
+            ),
             "experiment": {
                 "label": "2H DIAGNOSTIC SHADOW",
                 "elapsed_hours": elapsed,
@@ -646,17 +750,26 @@ class ShadowLiveEngine:
             },
             "nav_series": self.ledger.nav_series(1000),
             "opportunities": ops,
-            "feeds": [dict(source=k, **v) for k, v in sorted(self.feed_state.items())],
+            "feeds": [
+                dict(source=k, **v)
+                for k, v in sorted(self.feed_state.items())
+            ],
             "model_status": {
                 "Hierarchical fair value": "ONLINE"
                 if self.model.hierarchy.global_stat.n > 0
                 else "WARMUP",
-                "PCA residual factors": "ONLINE" if pca_online else "WARMUP",
-                "Dynamic Kalman factors": "ONLINE" if kalman_online else "WARMUP",
+                "PCA residual factors": "ONLINE"
+                if pca_online
+                else "WARMUP",
+                "Dynamic Kalman factors": "ONLINE"
+                if kalman_online
+                else "WARMUP",
                 "Sale hazard / liquidity": "PRIOR+ONLINE",
                 "Seller-quality posterior": "PRIOR",
-                "Text + image condition risk": "ONLINE",
-                "Regime detector": "ONLINE" if kalman_online else "WARMUP",
+                "Text + image condition risk": "TEXT_ONLY",
+                "Regime detector": "ONLINE"
+                if regime_online
+                else "WARMUP",
                 "Cross-market anomaly": "ONLINE",
                 "Conservative ensemble": "ONLINE",
             },
@@ -665,14 +778,45 @@ class ShadowLiveEngine:
                 "followup_codes": len(self._followup_codes),
                 "pca_history_rows": len(self._return_history),
                 "pca_rank": self.model.pca.fit_.rank if pca_online else 0,
+                "latest_entity_returns": len(self._latest_entity_return),
             },
         }
 
-    def run_cycle(self):
+    def run_cycle(self, fdr_alpha: float | None = None):
+        """Run the same economic pipeline used by the long-lived daemon."""
         counts = self.collect_cycle()
         candidates = self.build_candidates()
+        fdr = PosteriorFDRSelector(
+            float(
+                fdr_alpha
+                if fdr_alpha is not None
+                else os.getenv("ROMAN_FDR_ALPHA", "0.25")
+            )
+        )
+        fdr_result = fdr.annotate(candidates)
+        for c in candidates:
+            c["pre_fdr_trade"] = bool(c.get("trade"))
+            c["trade"] = bool(c.get("fdr_selected"))
+
+        scheduler_error = self._record_scheduler_candidates(candidates)
+        self.ledger.mark(candidates)
+        closed = self.ledger.apply_exit_policy()
         basket = self.allocate(candidates)
+        self.record_cycle(counts, candidates, len(fdr_result.selected))
+
         p = self.dashboard_payload(candidates, basket)
+        summary = self.ledger.summary()
         p["cycle_rows"] = counts
-        self.dashboard_path.write_text(json.dumps(p, indent=2, ensure_ascii=False))
+        p["closed_this_cycle"] = closed
+        p["realized_pnl"] = summary.realized_pnl
+        p["aged_capital"] = summary.aged_capital
+        p["scheduler_error"] = scheduler_error
+        p["posterior_fdr"] = {
+            "alpha": fdr_result.alpha,
+            "mean_false_probability": fdr_result.mean_false_probability,
+            "selected": len(fdr_result.selected),
+        }
+        self.dashboard_path.write_text(
+            json.dumps(p, indent=2, ensure_ascii=False)
+        )
         return p
