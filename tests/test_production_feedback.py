@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from roman_arb.production import ShadowLiveEngine
@@ -77,11 +79,24 @@ def test_closed_feedback_is_bound_to_recorded_exit_source(tmp_path):
             dict(common, exit_source="stockx", locked_exit_bid=150.0),
             dict(common, exit_source="ebay", locked_exit_bid=120.0),
         ]
+        engine.ledger.db.execute(
+            "INSERT INTO shadow_marks VALUES (?,?,?,?,?,?,?)",
+            (
+                "p1",
+                "2026-08-23T09:00:00+00:00",
+                120.0,
+                108.0,
+                20.0,
+                8.0,
+                json.dumps({"executable_exit_source": "ebay"}),
+            ),
+        )
+        engine.ledger.db.commit()
         learned = engine._learn_closed_outcomes(
             [
                 {
+                    "position_id": "p1",
                     "entity_key": "id:cards:x",
-                    "exit_source": "ebay",
                     "close_value": 108.0,
                     "roi": 0.08,
                     "age_days": 5.0,
