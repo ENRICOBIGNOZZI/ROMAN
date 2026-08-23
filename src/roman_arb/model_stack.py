@@ -125,8 +125,6 @@ class SimpleModelStack:
         elif h is None:
             fair = base_fair
         else:
-            # External executable/market estimate dominates until the hierarchy has
-            # substantial evidence; hierarchical estimate can move it by <=50% weight.
             wh = min(0.50, 0.50 * h.confidence)
             fair = (1.0 - wh) * base_fair + wh * h.price
 
@@ -164,10 +162,18 @@ class SimpleModelStack:
         if c.get("factor_residual_z") is not None:
             rz = self._f(c, "factor_residual_z")
             rc = self._f(c, "factor_confidence", 0.0)
-            adjusted_discount = residual_discount_overlay(0.0, rz, rc)
-            factor_roi = fv_roi + adjusted_discount
+            factor_roi = fv_roi + residual_discount_overlay(0.0, rz, rc)
         elif c.get("factor_net_roi") is not None:
             factor_roi = self._f(c, "factor_net_roi")
+        elif isinstance(c.get("factor_loadings"), dict) and c.get("item_return") is not None:
+            loadings = {str(k): float(v) for k, v in c["factor_loadings"].items()}
+            common, common_sigma = self.dynamic_factors.common_return(loadings)
+            item_return = self._f(c, "item_return")
+            scale = max(common_sigma, self._f(c, "factor_residual_scale", 0.02), 0.005)
+            rz = (item_return - common) / scale
+            initialized = sum(1 for k in loadings if k in self.dynamic_factors.filters and self.dynamic_factors.filters[k].state.initialized)
+            rc = (initialized / max(len(loadings), 1)) * regime.weight
+            factor_roi = fv_roi + residual_discount_overlay(0.0, rz, rc, max_adjustment=0.02)
 
         anomaly_roi = None
         if c.get("anomaly_net_roi") is not None:
@@ -177,8 +183,6 @@ class SimpleModelStack:
         elif isinstance(c.get("comparables_net"), list):
             a = self.anomaly.score(acquisition, c["comparables_net"])
             if a is not None:
-                # Shrink anomaly edge by evidence quality rather than treating every
-                # public comparable as equally executable.
                 anomaly_roi = a.net_roi * a.confidence
 
         locked_roi = None
@@ -202,7 +206,6 @@ class SimpleModelStack:
 
         base_sigma = self._f(c, "model_sigma_roi", 0.02)
         h_sigma = h.log_sigma if h is not None else 0.0
-        # Convert log-price sigma into a capped ROI uncertainty contribution.
         sigma_roi = math.sqrt(base_sigma * base_sigma + min(h_sigma, 0.15) ** 2 + (0.03 * cond.risk) ** 2)
         lcb_roi = dec.conservative_net_roi - self.lcb_z * sigma_roi
         expected_days = min(max(hz.expected_days, 1.0), 365.0)
